@@ -147,7 +147,7 @@ impl WinScoreApp {
             tool: Tool::Select,
             accidental: 0,
             dotted: false,
-            show_palette: true,
+            show_palette: false,
             show_help: false,
             show_about: false,
             show_text_editor: false,
@@ -168,6 +168,9 @@ impl WinScoreApp {
                 app.zoom = z.clamp(0.25, 3.0);
                 app.fit_request = None;
             }
+        }
+        if std::env::var_os("WINSCORE_PALETTE").is_some() {
+            app.show_palette = true;
         }
         if let Ok(v) = std::env::var("WINSCORE_SELECT") {
             if let Ok(n) = v.parse::<usize>() {
@@ -1843,10 +1846,23 @@ impl WinScoreApp {
             {
                 self.show_help = true;
             }
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("ITEM BAR OFF").size(9.0))
+                        .fill(Color32::from_rgb(210, 210, 205))
+                        .corner_radius(2.0)
+                        .min_size(Vec2::new(86.0, 20.0)),
+                )
+                .clicked()
+            {
+                self.show_palette = false;
+                self.tool = Tool::Select;
+            }
         });
     }
 
-    fn show_bottom_toolbar(&mut self, ui: &mut egui::Ui) {
+    fn show_main_toolbar(&mut self, ui: &mut egui::Ui) {
         let font = 9.0;
         let btn = |ui: &mut egui::Ui, label: &str, color: Color32| -> bool {
             ui.add(
@@ -1880,7 +1896,10 @@ impl WinScoreApp {
                     Err(err) => self.status = format!("Playback unavailable: {err}"),
                 }
             }
-            if btn(ui, "NEW ITEM", c3) { self.tool = Tool::Note { head: 0, dur: 1.0 }; }
+            if btn(ui, "NEW ITEM", c3) {
+                self.show_palette = true;
+                self.status = "Choose an item from the item bar.".into();
+            }
             if btn(ui, "SAVE SAME", c4) { self.save_same(); }
             if btn(ui, "OS", c4) { self.execute_command("OS"); }
             if btn(ui, "OH", c4) { self.execute_command("OH"); }
@@ -2128,6 +2147,9 @@ impl eframe::App for WinScoreApp {
             .show(ctx, |ui| {
                 self.show_status_and_command(ui);
             });
+        // WinScore's first-level command bar lives at the top.  The item
+        // palette is a second-level screen opened by NEW ITEM (or View →
+        // Items palette) and replaces the command bar while it is open.
         if self.show_palette {
             egui::TopBottomPanel::top("palette")
                 .exact_height(76.0)
@@ -2139,17 +2161,18 @@ impl eframe::App for WinScoreApp {
                 .show(ctx, |ui| {
                     self.show_palette(ui);
                 });
+        } else {
+            egui::TopBottomPanel::top("toolbar")
+                .exact_height(48.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(Color32::from_rgb(201, 198, 190))
+                        .inner_margin(egui::Margin::symmetric(4, 1)),
+                )
+                .show(ctx, |ui| {
+                    self.show_main_toolbar(ui);
+                });
         }
-        egui::TopBottomPanel::bottom("toolbar")
-            .exact_height(48.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(Color32::from_rgb(201, 198, 190))
-                    .inner_margin(egui::Margin::symmetric(4, 1)),
-            )
-            .show(ctx, |ui| {
-                self.show_bottom_toolbar(ui);
-            });
 
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(Color32::from_rgb(154, 152, 146)))
