@@ -1,4 +1,5 @@
 pub mod app;
+pub mod beam;
 pub mod draw;
 pub mod engrave;
 pub mod font;

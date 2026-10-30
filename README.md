@@ -32,6 +32,10 @@ model, and renders a letter-size page with real vector outlines.
   beams, slurs, hairpins, trills, ottavas (8va/8vb/15ma/15mb), pedals, first/second
   endings, text, dynamics, rehearsal numbers and more.  Barline P5 types follow the
   documented single/double/final/left-repeat/right-repeat/double-repeat encoding.
+* **Beam workflow like the original**: choose `NEW ITEM → BEAM` and click-drag across
+  the notes.  The beam is placed unconnected; it appears in a dedicated **BEAM EDIT**
+  bar where **AUTO** (or `AUTOX` for opposite stems) aligns it to the note stems and
+  derives the beam count.  The beam can be dragged as a whole before or after AUTO.
 * **Create Code 8 Staff** dialog (Format menu or STAFF in the item bar) writes a real
   Code 8 staff with P2/P3/P4/P5/P6/P7/P9/P10 columns; duplicate staff numbers are
   rejected, and the page is re-engraved immediately.
@@ -140,6 +144,7 @@ IN 6 0 0 1 200    NOTE 6            REST 6
 3 42.5            4 8.5             L 2 / R 2 / U 1 / D 1
 I 214             ST 6 1            OS / OH / OT
 LI / J / LJ       LJ 1 8 0 200      LJA
+AUTO / AUTOX      ADJ               BEAM+
 UNDO / REDO / UND / DE
 TOP / MID / BOT   Z 1.5             VER
 PM                PM 25             P1–P20 / P21–P30 toggle
@@ -180,6 +185,7 @@ Current tests cover:
 * tolerant parsing of the damaged `000.mus` template without panics;
 * vector export headers and page geometry;
 * Lineup/Justify geometry, narrow-range warning and chord slots;
+* beam placement/connection plans (AUTO, AUTOX, beam counts, opposite stems);
 * 32-bit headers for scores above 32,767 words;
 * Code 8 P7 line-count/invisible forms and every barline P5 type;
 * editing, text insertion, save/reparse and word-count consistency;

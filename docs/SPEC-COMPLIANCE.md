@@ -21,6 +21,7 @@
 | `IN` 参数 | 只接受 staff 号，其余参数忽略 | 接受 `IN a b c d e` = staff/P3/P4/P5/P6，缺失 staff 时按参数创建 | 07 §7.5.1 |
 | 参数矩阵 | 只有 P1–P20 | `PM` 或参数栏按钮切换 P1–P20 / P21–P30；`PM n` 查看 Pn | 06 §6.2.1 |
 | 键盘 | 方向键固定 0.5；无 Home/End/PageUp/PageDown/`[`/`]`/F2/F3/F9 | 按规格改为 1 单位/1 step，并补齐导航键 | 07 §7.3.1 |
+| 符杠创建/连接 | Code 6 一放下就自动扫描音符并连接，没有未连接状态和 AUTO 二级菜单 | 新增 BEAM EDIT 二级栏；拖动创建未连接 Beam（P30=2），AUTO/AUTOX/ADJ 连接并写入端点、P4/P5、P7、P9；拖动移动整条 Beam | 08 Beam、05 §5.6 |
 | CLI | 只能渲染 | 增加 `--li`、`--lj`，便于批处理和回归 | — |
 
 ## 2. 仍需补齐的规格
@@ -36,19 +37,22 @@
 3. **文本 Justify（`JT`）**  
    已有 Code 16 字距 P5、空格 P10、目标长度 P13 的渲染支持，但没有交互式选文本、按词/空格分配的 `JT` 流程。
 
-4. **五遍输入法**  
+4. **Beam 的高级编辑**
+   AUTO/ADJ 已实现；`SPL1/SPL2/SPL3/SPL4`、partial beam、tremolo 和跨 staff beam 的交互编辑仍未实现。未连接 Beam 的状态用 P30=2 标记，连接后写 P30=1。
+
+5. **五遍输入法**
    `IN` 现在能创建 staff 并进入点击输入，但没有 Pass 2–5 的 token 解析器（`4/`、`8/`、`S 1-4/`、`4b`、`1 16/17` 等），也没有 MIDI 步进输入。
 
-5. **页布局/部件抽取**  
+6. **页布局/部件抽取**
    `LAY`、`BARS-LINE`/`BARS.TMP`、`RIP/RIPX`、`MN`、`PARTS` 未实现。主工具栏对应按钮仍只显示说明。
 
-6. **DRAW / EPS 导入 / PMX / PREF 读写**  
+7. **DRAW / EPS 导入 / PMX / PREF 读写**
    `DRAW` 编辑器、Code 15 EPS 导入、PMX 导入导出、`PREF.DAT` 读写、`FMnn.FMT` 与 `symblist.txt` 导入尚未实现。当前使用系统字体和内置 Bravura 轮廓。
 
-7. **DRAW 对象与罕见字形**  
+8. **DRAW 对象与罕见字形**
    Code 9 的符号库、吉他和弦图、手风琴、Code 12 的复杂子类型只覆盖常见分支；未知 Code 会保留并可选，但不绘制。
 
-8. **页对象/多页**  
+9. **页对象/多页**
    仅显示第一页；P2 201–256 会保留但不会与正常页合成。打印仍是单页 PDF。
 
 ## 3. 与文档冲突、暂不修改的地方
@@ -73,10 +77,11 @@
 
 ## 4. 回归测试
 
-`cargo test --all-targets` 当前 20 项：
+`cargo test --all-targets` 当前 24 项：
 
 - `src/layout.rs`：Lineup、Justify 填满、窄区间警告/等量削减、和弦共槽（4）；
-- `tests/engrave.rs`：样本渲染、PDF/SVG、编辑、音频、页面尺寸、item-bar 标记、Code 8 创建、P7 单线/隐藏、P10 英制/公制、全部 barline 类型（10）；
+- `src/beam.rs`：AUTO 连接上下符干、按最短音符取 beam 数、单音符拒绝（3）；
+- `tests/engrave.rs`：样本渲染、PDF/SVG、编辑、音频、页面尺寸、item-bar 标记、Code 8 创建、P7 单线/隐藏、P10 英制/公制、全部 barline 类型、AUTO 前后 Beam 渲染（11）；
 - `tests/mus_roundtrip.rs`：三个样本 bit-exact、损坏模板、计数一致性、大文件 u32 头（4）；
 - `src/model.rs`：文本解码/字体 run（2）。
 

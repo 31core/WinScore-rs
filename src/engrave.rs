@@ -319,6 +319,25 @@ impl<'a> Engraver<'a> {
             if (x2 - x1).abs() < 0.5 && (item.get(3) - item.get(6)).abs() < 0.5 {
                 continue;
             }
+            let count = count.clamp(1, 6);
+            // P30=2 is written for a freshly placed, not-yet-connected beam.
+            // It is drawn as an independent floating beam until AUTO/ADJ is
+            // invoked.  Existing files have P30=0 and keep the historical
+            // automatic stem attachment.
+            if (item.get(30) - 2.0).abs() < 0.5 {
+                self.beams.push(BeamInfo {
+                    item: idx,
+                    staff: staff_id,
+                    x1,
+                    x2,
+                    y1: st.level_y(item.get(4)),
+                    y2: st.level_y(item.get(5)),
+                    up,
+                    count,
+                    members: Vec::new(),
+                });
+                continue;
+            }
             let (lo, hi) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
             let mut members = Vec::new();
             let mut member_levels = Vec::new();
@@ -978,15 +997,33 @@ impl<'a> Engraver<'a> {
             return;
         };
         let color = item_color(&self.score.items[b.item]);
+        let thickness = (0.50 * st.space).max(1.8);
+        let gap = (0.75 * st.space).max(2.8);
+        let away = if b.up { -1.0 } else { 1.0 };
+        if b.members.is_empty() {
+            // Unconnected beam: draw the full stack at the user's endpoints.
+            for level in 0..b.count.max(1) {
+                let off = -away * (level as f32 * gap + thickness * 0.5);
+                self.draws.line(
+                    Pt::new(b.x1, b.y1 + off),
+                    Pt::new(b.x2, b.y2 + off),
+                    color,
+                    thickness,
+                );
+            }
+            let top = b.y1.min(b.y2) - b.count as f32 * gap - 6.0;
+            let bottom = b.y1.max(b.y2) + 6.0;
+            self.add_hit(
+                b.item,
+                Pt::new(b.x1.min(b.x2), top),
+                Pt::new(b.x1.max(b.x2), bottom),
+            );
+            return;
+        }
         // Measured from the original WinScore output: a beam is exactly half
         // a staff space thick and successive beams are 3/4 of a space apart.
         // P4/P5 + 7 steps define the outer edge (stem tip); the stack grows
         // back toward the noteheads.
-        let thickness = (0.50 * st.space).max(1.8);
-        let gap = (0.75 * st.space).max(2.8);
-        // Page y grows downwards.  "away" points from the notes towards the
-        // beam tip: negative for up-stems, positive for down-stems.
-        let away = if b.up { -1.0 } else { 1.0 };
         // The full-group beam is outermost; extra beams grow toward the notes.
         let layer_offset = |level: f32| -away * (level * gap + thickness * 0.5);
         let mut members: Vec<(usize, f32, i32)> = b

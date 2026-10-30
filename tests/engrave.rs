@@ -189,3 +189,34 @@ fn code8_absolute_position_uses_measurement_unit() {
     // P10=1 inch vs P10=1 cm: the metric staff must sit higher by 72-28.35 pt.
     assert!((da - db + (72.0 - 72.0 / 2.54)).abs() < 0.01);
 }
+
+#[test]
+fn auto_beam_connects_and_engraves_both_states() {
+    let fonts = FontBook::load();
+    let mut score = Score::default();
+    score
+        .items
+        .push(Item::new(8, vec![8.0, 1.0, 0.0, 0.0, 1.0, 200.0, 5.0]));
+    for (i, level) in [3.0, 5.0, 7.0, 6.0].iter().enumerate() {
+        score.items.push(Item::new(
+            1,
+            vec![1.0, 1.0, 10.0 + i as f32 * 10.0, *level, 10.0, 0.0, 0.5],
+        ));
+    }
+    let mut beam = Item::new(6, vec![6.0, 1.0, 8.0, 13.0, 13.0, 45.0, 11.0]);
+    beam.set(30, 2.0);
+    let beam_idx = score.add_item(beam);
+
+    let before = Engraver::new(&score, &fonts).engrave();
+    assert!(before.hits.iter().any(|h| h.item == beam_idx));
+    assert!(before.draws.paints.len() > 10);
+
+    let plan = winscore_rs::beam::plan(&score, beam_idx, false, None).unwrap();
+    winscore_rs::beam::apply(&mut score, &plan);
+    assert_eq!(score.items[beam_idx].get(3), 10.0);
+    assert_eq!(score.items[beam_idx].get(6), 40.0);
+    assert_eq!(score.items[beam_idx].get(30), 1.0);
+    let after = Engraver::new(&score, &fonts).engrave();
+    assert!(after.hits.iter().any(|h| h.item == beam_idx));
+    assert!(after.draws.paints.len() > 10);
+}

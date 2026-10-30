@@ -140,7 +140,7 @@ line positions are odd levels and spaces are even levels.
 | 9 | Symbol library | P5 symbol, P6 size, P9 rotation; see `symblist.txt` |
 | 10 | Number / rehearsal mark | P5 number, P6 size, P7 font, P8 circle/box |
 | 12 | Box/circle/guitar | P5 shape, P6/P7 size, P8 thickness |
-| 14 | Barline/brace | P3, P4 staves covered, P5 type (0 single, 1 double, 2 final, 3 repeat right, 4 repeat left, 5 double repeat, 6 heavy, 7 dashed, 8 brace, 9 bracket) |
+| 14 | Barline/brace | P3, P4 staves covered, P5 type (0 single, 1 thin, 2 double, 3 final, 4 repeat dots left, 5 repeat dots right, 6 double repeat, 7 dashed, 8 brace, 9 bracket) |
 | 16 | Text | see above |
 | 17 | Key signature | P5 sharps (+) / flats (−), P6 clef type, P7 spacing |
 | 18 | Meter | P5 top, P6 bottom, P7 size, P8/P9 second meter |
@@ -166,6 +166,11 @@ beam stack grows back toward the noteheads, with 0.5-space-thick beams spaced 0.
 spaces apart.  The Rust engraver uses the stored P4/P5 line when its stem clearances are
 sane, falls back to the sounding notes only for stale (usually grace-note) data, and
 constructs rhythm-aware partial beams.
+
+A newly placed, not-yet-connected beam is marked with **P30=2**.  It is drawn as an
+independent beam at its P3/P4–P6/P5 endpoints and does not alter stems or suppress
+flags.  `AUTO`/`AUTOX` writes the connected endpoints and sets P9=-1, P30=1.  Existing
+WinScore files leave P30 at 0 and keep the historical automatic stem attachment.
 
 ## Vertical staff placement example
 

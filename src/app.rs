@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use egui::{Align, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 
+use crate::beam;
 use crate::draw::Pt;
 use crate::engrave::{EngravedPage, Engraver, Hit, PAGE_H, PAGE_W, SCORE_UNIT};
 use crate::font::FontBook;
@@ -42,9 +43,16 @@ enum FitMode {
     Width,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DragMode {
+    Move,
+    CreateBeam,
+}
+
 #[derive(Debug, Clone)]
 struct DragState {
     item: usize,
+    mode: DragMode,
     origin: Pos2,
     p3: f32,
     p4: f32,
@@ -430,10 +438,18 @@ impl WinScoreApp {
                     0.0,
                 ],
             )),
-            Tool::Beam => self.score.add_item(Item::new(
-                6,
-                vec![6.0, staff as f32, p3, level, level, p3 + 10.0, 11.0],
-            )),
+            Tool::Beam => {
+                let mut beam = Item::new(
+                    6,
+                    vec![6.0, staff as f32, p3, level, level, p3 + 10.0, 11.0],
+                );
+                // P30=2 marks a freshly placed beam that is not connected to
+                // its notes yet.  AUTO clears this marker.
+                beam.set(30, 2.0);
+                self.show_palette = false;
+                self.tool = Tool::Select;
+                self.score.add_item(beam)
+            }
             Tool::Hairpin => self.score.add_item(Item::new(
                 4,
                 vec![4.0, staff as f32, p3, level, 999.0, p3 + 12.0, 0.0],
@@ -483,7 +499,12 @@ impl WinScoreApp {
         };
         self.selected = Some(idx);
         self.mark_changed();
-        self.status = format!("Added {}.", self.score.items[idx].label());
+        if tool == Tool::Beam {
+            self.status =
+                "Beam placed (not connected). Drag it over the notes, then click AUTO.".into();
+        } else {
+            self.status = format!("Added {}.", self.score.items[idx].label());
+        }
     }
 
     fn open_path(&mut self, path: PathBuf) {
@@ -656,13 +677,77 @@ impl WinScoreApp {
     fn move_selected(&mut self, dx: f32, dy: f32) {
         if let Some(idx) = self.selected {
             self.push_undo();
-            let item = &mut self.score.items[idx];
-            item.set(3, item.p3() + dx);
-            item.set(4, item.p4() + dy);
+            translate_item(&mut self.score.items[idx], dx, dy);
             self.mark_changed();
             let item = &self.score.items[idx];
             self.status = format!("Moved to P3 {:.2}, P4 {:.2}.", item.p3(), item.p4());
         }
+    }
+
+    fn active_beam(&mut self) -> Option<usize> {
+        if let Some(idx) = self.selected
+            && self
+                .score
+                .items
+                .get(idx)
+                .map(|i| i.code == 6)
+                .unwrap_or(false)
+        {
+            return Some(idx);
+        }
+        let idx = self.score.items.iter().rposition(|i| i.code == 6)?;
+        self.selected = Some(idx);
+        Some(idx)
+    }
+
+    /// Connect a Code 6 beam to the notes under its horizontal extent.  This is
+    /// the original `AUTO` command: it finds the beamed notes, aligns the beam
+    /// to their stems, derives the number of beams from their flags and writes
+    /// the resulting endpoints/levels back into Code 6.
+    fn connect_beam(&mut self, opposite: bool, direction: Option<i32>) {
+        let Some(idx) = self.active_beam() else {
+            self.status = "AUTO: select a Code 6 beam first.".into();
+            return;
+        };
+        let plan = match beam::plan(&self.score, idx, opposite, direction) {
+            Ok(p) => p,
+            Err(msg) => {
+                self.status = msg;
+                return;
+            }
+        };
+        self.push_undo();
+        beam::apply(&mut self.score, &plan);
+        self.mark_changed();
+        self.status = format!(
+            "AUTO: {} notes connected, {} beam{}, {} stem.",
+            plan.notes,
+            plan.count,
+            if plan.count == 1 { "" } else { "s" },
+            if plan.direction == 1 { "up" } else { "down" }
+        );
+    }
+
+    fn set_beam_count(&mut self, count: i32) {
+        let Some(idx) = self.active_beam() else {
+            self.status = "Select a Code 6 beam first.".into();
+            return;
+        };
+        self.push_undo();
+        let item = &mut self.score.items[idx];
+        let dir = (item.get(7).abs().round() as i32 / 10).clamp(1, 2);
+        item.set(7, (dir * 10 + count.clamp(1, 6)) as f32);
+        self.mark_changed();
+        self.status = format!("Beam count set to {}.", count.clamp(1, 6));
+    }
+
+    fn toggle_beam_direction(&mut self) {
+        let Some(idx) = self.active_beam() else {
+            self.status = "Select a Code 6 beam first.".into();
+            return;
+        };
+        let dir = (self.score.items[idx].get(7).abs().round() as i32 / 10).clamp(1, 2);
+        self.connect_beam(false, Some(3 - dir));
     }
 
     fn change_staff(&mut self, delta: i32) {
@@ -938,6 +1023,18 @@ impl WinScoreApp {
                     "U" => self.move_selected(0.0, d),
                     _ => self.move_selected(0.0, -d),
                 }
+            }
+            "AUTO" => self.connect_beam(false, None),
+            "AUTOX" => self.connect_beam(true, None),
+            "ADJ" => self.connect_beam(false, None),
+            "FLIP" => self.toggle_beam_direction(),
+            "BEAM2" | "AUTOBEAM" => self.connect_beam(false, None),
+            "BEAM+" => {
+                let current = self
+                    .active_beam()
+                    .map(|i| (self.score.items[i].get(7).abs().round() as i32 % 10).clamp(1, 6))
+                    .unwrap_or(1);
+                self.set_beam_count(current + 1);
             }
             "OS" | "OH" | "OT" => {
                 self.push_undo();
@@ -1257,6 +1354,19 @@ impl WinScoreApp {
                                 self.selected = None;
                                 ui.close_menu();
                             }
+                            if let Some(idx) = self.selected
+                                && self.score.items[idx].code == 6
+                            {
+                                ui.separator();
+                                if ui.button("AUTO connect beam").clicked() {
+                                    self.connect_beam(false, None);
+                                    ui.close_menu();
+                                }
+                                if ui.button("Flip beam direction").clicked() {
+                                    self.toggle_beam_direction();
+                                    ui.close_menu();
+                                }
+                            }
                         });
                     }
                 }
@@ -1265,11 +1375,43 @@ impl WinScoreApp {
             if response.drag_started() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let pp = to_page(pos);
-                    if self.select_at(pp).is_some() {
+                    if page_rect.contains(pos)
+                        && self.tool == Tool::Beam
+                        && self.hit_at(pp).is_none()
+                    {
+                        // Click-drag creates the beam's horizontal extent.
+                        // It stays unconnected (P30=2) until AUTO is used.
+                        let staff = self.staff_at(pp.y).unwrap_or(1);
+                        let p3 = self.x_to_p3(pp.x).clamp(0.0, 200.0);
+                        let mut level = self.level_at(staff, pp.y);
+                        if !level.is_finite() {
+                            level = 13.0;
+                        }
+                        let snapshot = self.score.clone();
+                        let mut beam =
+                            Item::new(6, vec![6.0, staff as f32, p3, level, level, p3, 11.0]);
+                        beam.set(30, 2.0);
+                        let idx = self.score.add_item(beam);
+                        self.selected = Some(idx);
+                        // Keep the panel height stable while the user is still
+                        // dragging; the beam bar opens on release.
+                        self.mark_changed();
+                        self.drag = Some(DragState {
+                            item: idx,
+                            mode: DragMode::CreateBeam,
+                            origin: pp,
+                            p3,
+                            p4: level,
+                            staff,
+                            snapshot,
+                        });
+                        self.status = "Drag to set the beam width, then click AUTO.".into();
+                    } else if self.select_at(pp).is_some() {
                         if let Some(idx) = self.selected {
                             let it = &self.score.items[idx];
                             self.drag = Some(DragState {
                                 item: idx,
+                                mode: DragMode::Move,
                                 origin: pp,
                                 p3: it.p3(),
                                 p4: it.p4(),
@@ -1284,38 +1426,80 @@ impl WinScoreApp {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let pp = to_page(pos);
                     if let Some(drag) = self.drag.clone() {
-                        let dx = (pp.x - drag.origin.x) / SCORE_UNIT;
-                        let staff_space = self
-                            .page
-                            .staves
-                            .get(&drag.staff)
-                            .map(|s| s.space)
-                            .unwrap_or(6.3);
-                        let dy = -(pp.y - drag.origin.y) / (staff_space * 0.5);
-                        let p3 = ((drag.p3 + dx) * 20.0).round() / 20.0;
-                        let p4 = ((drag.p4 + dy) * 2.0).round() / 2.0;
-                        if let Some(it) = self.score.items.get_mut(drag.item) {
-                            it.set(3, p3.clamp(-20.0, 220.0));
-                            it.set(4, p4.clamp(-30.0, 40.0));
+                        if drag.mode == DragMode::CreateBeam {
+                            let p6 = self.x_to_p3(pp.x).clamp(0.0, 200.0);
+                            let mut p5 = self.level_at(drag.staff, pp.y);
+                            if !p5.is_finite() {
+                                p5 = drag.p4;
+                            }
+                            if let Some(it) = self.score.items.get_mut(drag.item) {
+                                it.set(3, drag.p3);
+                                it.set(4, drag.p4);
+                                it.set(6, p6);
+                                it.set(5, p5);
+                            }
+                            self.mark_changed();
+                            self.status = format!(
+                                "Beam from P3 {:.2} to {:.2}; release then AUTO.",
+                                drag.p3, p6
+                            );
+                        } else {
+                            let dx = (pp.x - drag.origin.x) / SCORE_UNIT;
+                            let staff_space = self
+                                .page
+                                .staves
+                                .get(&drag.staff)
+                                .map(|s| s.space)
+                                .unwrap_or(6.3);
+                            let dy = -(pp.y - drag.origin.y) / (staff_space * 0.5);
+                            let p3 = ((drag.p3 + dx) * 20.0).round() / 20.0;
+                            let p4 = ((drag.p4 + dy) * 2.0).round() / 2.0;
+                            if let Some(it) = self.score.items.get_mut(drag.item) {
+                                let code = it.code;
+                                it.set(3, p3.clamp(-20.0, 220.0));
+                                it.set(4, p4.clamp(-30.0, 40.0));
+                                let ddx = p3 - drag.p3;
+                                let ddy = p4 - drag.p4;
+                                if matches!(code, 4 | 5 | 6) {
+                                    let p6 = drag.snapshot.items[drag.item].get(6);
+                                    let p5 = drag.snapshot.items[drag.item].get(5);
+                                    it.set(6, (p6 + ddx).clamp(-20.0, 220.0));
+                                    it.set(5, (p5 + ddy).clamp(-30.0, 40.0));
+                                } else if code == 7 {
+                                    let p6 = drag.snapshot.items[drag.item].get(6);
+                                    it.set(6, (p6 + ddx).clamp(-20.0, 220.0));
+                                }
+                            }
+                            self.mark_changed();
+                            self.status = format!(
+                                "Dragging item {}: P3 {:.2}, P4 {:.2}",
+                                drag.item + 1,
+                                p3,
+                                p4
+                            );
                         }
-                        self.mark_changed();
-                        self.status = format!(
-                            "Dragging item {}: P3 {:.2}, P4 {:.2}",
-                            drag.item + 1,
-                            p3,
-                            p4
-                        );
                     }
                 }
             }
             if response.drag_stopped() {
                 if let Some(drag) = self.drag.take() {
+                    if drag.mode == DragMode::CreateBeam {
+                        if let Some(it) = self.score.items.get_mut(drag.item) {
+                            if (it.get(6) - it.get(3)).abs() < 1.0 {
+                                it.set(6, it.get(3) + 10.0);
+                                it.set(5, it.get(4));
+                            }
+                        }
+                        self.show_palette = false;
+                        self.tool = Tool::Select;
+                    }
                     self.undo.push(drag.snapshot);
                     if self.undo.len() > 120 {
                         self.undo.remove(0);
                     }
                     self.redo.clear();
                     self.dirty = true;
+                    self.rebuild();
                 }
             }
         });
@@ -2180,7 +2364,13 @@ impl WinScoreApp {
             ui.spacing_mut().item_spacing = Vec2::new(2.0, 1.0);
             ui.label(RichText::new("LINES").size(9.0).strong());
             self.tool_button(ui, "SLUR", c_line, Tool::Slur, "Slur");
-            self.tool_button(ui, "BEAM", c_line, Tool::Beam, "Beam");
+            self.tool_button(
+                ui,
+                "BEAM",
+                c_line,
+                Tool::Beam,
+                "Create Code 6 Beam: click-drag over notes, then use AUTO",
+            );
             self.tool_button(ui, "CRESC", c_line, Tool::Hairpin, "Hairpin");
             ui.separator();
             ui.label(RichText::new("TEXT / MARKS").size(9.0).strong());
@@ -2237,6 +2427,81 @@ impl WinScoreApp {
             self.tool_button(ui, "1.", c_line, Tool::Ending(1), "First ending bracket");
             self.tool_button(ui, "2.", c_line, Tool::Ending(2), "Second ending bracket");
         });
+    }
+
+    fn show_beam_toolbar(&mut self, ui: &mut egui::Ui) {
+        let font = 9.0;
+        let btn = |ui: &mut egui::Ui, label: &str, color: Color32| -> bool {
+            ui.add(
+                egui::Button::new(
+                    RichText::new(label)
+                        .size(font)
+                        .color(Color32::from_gray(15)),
+                )
+                .fill(color)
+                .stroke(Stroke::new(1.0_f32, Color32::from_gray(90)))
+                .corner_radius(2.0)
+                .min_size(Vec2::new(42.0, 19.0)),
+            )
+            .clicked()
+        };
+        let green = Color32::from_rgb(105, 220, 105);
+        let cyan = Color32::from_rgb(82, 205, 205);
+        let yellow = Color32::from_rgb(240, 225, 60);
+        let pink = Color32::from_rgb(230, 105, 170);
+        let grey = Color32::from_rgb(200, 200, 195);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
+            ui.label(RichText::new("BEAM EDIT").size(9.0).strong());
+            if btn(ui, "AUTO", green) {
+                self.connect_beam(false, None);
+            }
+            if btn(ui, "AUTOX", green) {
+                self.connect_beam(true, None);
+            }
+            if btn(ui, "ADJ", cyan) {
+                self.connect_beam(false, None);
+            }
+            if btn(ui, "FLIP", pink) {
+                self.toggle_beam_direction();
+            }
+            ui.separator();
+            if btn(ui, "STEM UP", grey) {
+                self.connect_beam(false, Some(1));
+            }
+            if btn(ui, "STEM DN", grey) {
+                self.connect_beam(false, Some(2));
+            }
+            ui.separator();
+            for n in 1..=4 {
+                if btn(ui, &format!("{n} BEAM"), yellow) {
+                    self.set_beam_count(n);
+                }
+            }
+            if btn(ui, "BEAM+", yellow) {
+                let current = self
+                    .active_beam()
+                    .map(|i| (self.score.items[i].get(7).abs().round() as i32 % 10).clamp(1, 6))
+                    .unwrap_or(1);
+                self.set_beam_count(current + 1);
+            }
+            ui.separator();
+            if btn(ui, "DELETE", pink) {
+                self.delete_selected();
+            }
+            if btn(ui, "DONE", grey) {
+                self.selected = None;
+                self.tool = Tool::Select;
+                self.status = "Beam edit closed.".into();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Place: NEW ITEM > BEAM, drag across the notes, then AUTO.  AUTO also works in the command box.",
+            )
+            .size(9.0)
+            .color(Color32::from_gray(55)),
+        );
     }
 
     fn show_main_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -2388,7 +2653,7 @@ impl WinScoreApp {
                     ui.label("Arrows: nudge 1 unit/step  |  Home/End: P3 ±10  |  PageUp/PageDown: P4 ±4\n[ / ]: previous/next staff  |  F2/F3: previous/next item  |  F9: leave edit  |  Delete: delete\nCtrl+Z / Ctrl+Shift+Z: undo / redo  |  Ctrl+S: save  |  Ctrl+O: open  |  F1: help");
                     ui.separator();
                     ui.strong("Command box (SCORE-style)");
-                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — toggle P1–P20 / P21–P30 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
+                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nAUTO / AUTOX — connect a selected Code 6 beam\nADJ / FLIP / BEAM+ — adjust or extend a beam\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — toggle P1–P20 / P21–P30 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
                     ui.separator();
                     ui.strong("File compatibility");
                     ui.label("Reads and writes native binary WinScore .mus files, including code-16 text objects with their original font escapes and word padding. Unknown object codes are preserved even when they are not yet drawn.");
@@ -2600,6 +2865,22 @@ impl eframe::App for WinScoreApp {
                 .show(ctx, |ui| {
                     self.show_palette(ui);
                 });
+        } else if self
+            .selected
+            .and_then(|i| self.score.items.get(i))
+            .map(|i| i.code == 6)
+            .unwrap_or(false)
+        {
+            egui::TopBottomPanel::top("beam_edit")
+                .exact_height(50.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(Color32::from_rgb(204, 201, 193))
+                        .inner_margin(egui::Margin::symmetric(4, 1)),
+                )
+                .show(ctx, |ui| {
+                    self.show_beam_toolbar(ui);
+                });
         } else {
             egui::TopBottomPanel::top("toolbar")
                 .exact_height(48.0)
@@ -2624,6 +2905,25 @@ impl eframe::App for WinScoreApp {
         self.text_editor_window(ctx);
         self.help_window(ctx);
         self.about_window(ctx);
+    }
+}
+
+/// Move an object as a whole.  Line-like objects store their second endpoint
+/// in P6/P5, so dragging a beam or slur must translate both ends rather than
+/// stretching it from the left endpoint.
+fn translate_item(item: &mut Item, dx: f32, dy: f32) {
+    let code = item.code;
+    item.set(3, item.p3() + dx);
+    item.set(4, item.p4() + dy);
+    match code {
+        4 | 5 | 6 => {
+            item.set(6, item.get(6) + dx);
+            item.set(5, item.get(5) + dy);
+        }
+        7 => {
+            item.set(6, item.get(6) + dx);
+        }
+        _ => {}
     }
 }
 
