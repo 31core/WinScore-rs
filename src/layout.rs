@@ -91,6 +91,7 @@ pub fn layout_staff(
         staff_size.abs()
     };
 
+    resolve_chord_p10(score, staff);
     let mut events = collect_events(score, staff, left, size);
     if events.is_empty() {
         return (0, Vec::new());
@@ -221,6 +222,51 @@ pub fn layout_score(
     report
 }
 
+/// SCORE resolves seconds/unisons in the same column by moving one head with
+/// P10 rather than changing P3.  This pass only fills P10 when the user has not
+/// already provided an offset.
+fn resolve_chord_p10(score: &mut Score, staff: i32) {
+    let mut columns: Vec<(f32, Vec<usize>)> = Vec::new();
+    for (idx, item) in score.items.iter().enumerate() {
+        if item.code != 1 || item.staff() != staff {
+            continue;
+        }
+        if (item.get(7).abs() - 65.0).abs() < 0.5 {
+            continue;
+        }
+        let x = item.get(3);
+        if let Some((_, notes)) = columns.iter_mut().find(|(cx, _)| (x - *cx).abs() < 0.05) {
+            notes.push(idx);
+        } else {
+            columns.push((x, vec![idx]));
+        }
+    }
+    for (_, mut notes) in columns {
+        if notes.len() < 2 {
+            continue;
+        }
+        notes.sort_by(|a, b| {
+            score.items[*a]
+                .get(4)
+                .partial_cmp(&score.items[*b].get(4))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut last_level: Option<f32> = None;
+        for idx in notes {
+            let level = score.items[idx].get(4);
+            let p10 = score.items[idx].get(10);
+            if last_level
+                .map(|prev| (level - prev).abs() <= 1.01)
+                .unwrap_or(false)
+                && p10.abs() < 0.01
+            {
+                score.items[idx].set(10, 10.0);
+            }
+            last_level = Some(level);
+        }
+    }
+}
+
 fn staff_geometry(score: &Score, staff: i32) -> (f32, f32, f32) {
     for item in score.items.iter().filter(|i| i.code == 8) {
         if item.staff() != staff {
@@ -313,7 +359,58 @@ fn collect_events(score: &Score, staff: i32, left: f32, size: f32) -> Vec<Event>
                 .map(|&i| score.items[i].get(7).abs())
                 .fold(0.0, f32::max)
         });
-        event.width = (QUARTER_WIDTH * rhythm * size).max(0.0);
+        let rhythm_width = (QUARTER_WIDTH * rhythm * size).max(0.0);
+        // 20*P7 is only the rhythmic advance.  The collision box also has to
+        // hold the head, accidental and augmentation dots; otherwise dense
+        // 16th/32nd runs and accidentals overlap after Justify.
+        let space_units = 6.3 * size / 2.7;
+        let mut visual = 0.0_f32;
+        for &idx in &event.members {
+            let item = &score.items[idx];
+            if item.code != 1 {
+                continue;
+            }
+            let head_code = item.get(6).round() as i32;
+            let note_size = {
+                let v = item.get(15).abs();
+                if v < 0.001 {
+                    1.0
+                } else {
+                    if item.get(4).abs() >= 100.0 {
+                        v * 0.58
+                    } else {
+                        v
+                    }
+                }
+            };
+            let head_w = if matches!(head_code % 10, 2 | 3) {
+                1.69
+            } else {
+                1.18
+            } * space_units
+                * note_size;
+            let acc = ((item.get(5).abs().round() as i32) % 10) != 0;
+            let acc_size = {
+                let p29 = item.get(29);
+                if p29.abs() < 0.001 { 1.0 } else { p29.abs() }
+            };
+            let acc_w = if acc {
+                1.15 * space_units * acc_size
+            } else {
+                0.0
+            };
+            let p9 = item.get(9).round() as i32;
+            let dots = ((p9 / 10).abs() % 10) as f32;
+            let dot_size = {
+                let p31 = item.get(31);
+                if p31.abs() < 0.0001 { 1.0 } else { p31.abs() }
+            };
+            let dot_w = dots * 0.55 * space_units * dot_size;
+            let p10 = item.get(10).abs();
+            let p10_w = ((p10 % 100.0) / 10.0) * head_w;
+            visual = visual.max(head_w + acc_w + dot_w + p10_w);
+        }
+        event.width = rhythm_width.max(visual);
     }
     // A barline before the first note should not be counted as an extra
     // leading slot; it already sits at the start of the staff.
@@ -417,6 +514,36 @@ mod tests {
             assert!(w[1].p3() >= w[0].p3());
         }
         assert!(score.items.last().unwrap().p3() <= 70.0);
+    }
+
+    #[test]
+    fn dense_accidentals_expand_the_collision_box() {
+        let mut score = Score::default();
+        score.items.push(staff());
+        for x in [0.0, 10.0, 20.0] {
+            score
+                .items
+                .push(Item::new(1, vec![1.0, 1.0, x, 3.0, 12.0, 0.0, 0.0625]));
+        }
+        layout_score(&mut score, 1, 1, None, None, false);
+        let xs: Vec<f32> = score.items[1..].iter().map(|i| i.p3()).collect();
+        assert!(
+            xs[1] - xs[0] > 4.0,
+            "3.5-unit head+accidental box expected, got {xs:?}"
+        );
+        assert!(xs[2] - xs[1] > 4.0);
+    }
+
+    #[test]
+    fn seconds_get_a_p10_offset() {
+        let mut score = Score::default();
+        score.items.push(staff());
+        score.items.push(note(10.0, 1.0));
+        score
+            .items
+            .push(Item::new(1, vec![1.0, 1.0, 10.0, 4.0, 10.0, 0.0, 1.0]));
+        layout_score(&mut score, 1, 1, None, None, false);
+        assert_eq!(score.items[2].get(10), 10.0);
     }
 
     #[test]

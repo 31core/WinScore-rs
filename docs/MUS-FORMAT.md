@@ -129,7 +129,7 @@ line positions are odd levels and spaces are even levels.
 
 | Code | Meaning | Key parameters |
 |---|---|---|
-| 1 | Note | P4 level, P5 stem+accidental, P6 head, P7 duration, P8 stem length, P9 dots/tails, P10 head offset, P11 marks, P15 size, P20 width |
+| 1 | Note | P4 level, P5 stem+accidental, P6 head, P7 duration, P8 stem length, P9 dots/tails, P10 head offset (10 = one head width), P11 marks, P15 size, P19 dot vertical, P20 width, P29 accidental size, P31 dot size |
 | 2 | Rest | P4 level, P5 type, P6 dots, P7 duration, P8 fermata/number, P9 centering |
 | 3 | Clef | P4, P5 clef type (0 treble, 1 bass, 2 alto, 3 tenor, 4 percussion), P6 size |
 | 4 | Line | P3/P4 left, P5=999 hairpin, P5/P6 right, P7 type, P8/P9 dash |
@@ -156,6 +156,14 @@ Notes' P5 is interpreted as:
 P9's tens digit is the number of augmentation dots; its units digit is the number of
 explicit tails. P7 is duration in quarter notes (`1.0` = quarter, `0.5` = eighth,
 `1.5` = dotted quarter), which is also the horizontal spacing weight.
+
+P10 is in tenths of a head width: 10 moves a black/whole head by 1.18/1.69 staff
+spaces, and values ≥100 also carry the accidental.  P31 is a multiplier for the
+augmentation-dot size (`0` or `1` = normal, `1.2` = 20% larger).  P9's `+100` puts the
+dot below a line and `+1000` moves it one head width to the right.
+
+Clefs use fixed design anchors: treble G4 (P4 5), bass F3 (P4 9), alto/tenor C4
+(P4 7/9); P4=1 is the standard position and the glyph moves by `(P4-1)` from there.
 
 Beams (code 6) store the stem direction in the tens digit of P7 and the beam count in the
 units digit. P4/P5 give the beam reference levels; adding/subtracting seven diatonic

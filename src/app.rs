@@ -8,7 +8,7 @@ use egui::{Align, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, 
 
 use crate::beam;
 use crate::draw::Pt;
-use crate::engrave::{EngravedPage, Engraver, Hit, PAGE_H, PAGE_W, SCORE_UNIT};
+use crate::engrave::{EngravedPage, Engraver, Hit, PAGE_H, PAGE_LEFT, PAGE_W, SCORE_UNIT};
 use crate::font::FontBook;
 use crate::layout;
 use crate::model::{Item, Score, TextBlock};
@@ -30,6 +30,9 @@ enum Tool {
     Slur,
     Beam,
     Hairpin,
+    Line,
+    Box(i32),
+    Bracket,
     Number,
     Trill,
     Ottava(i32),
@@ -41,6 +44,7 @@ enum Tool {
 enum FitMode {
     Page,
     Width,
+    Height,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,6 +82,15 @@ struct StaffForm {
     p10: f32,
 }
 
+#[derive(Debug, Clone)]
+struct InputForm {
+    staff: i32,
+    left: f32,
+    p4: f32,
+    p5: f32,
+    right: f32,
+}
+
 pub struct WinScoreApp {
     score: Score,
     fonts: FontBook,
@@ -86,6 +99,8 @@ pub struct WinScoreApp {
     tex_scale: f32,
     zoom: f32,
     fit_request: Option<FitMode>,
+    last_fit: Option<FitMode>,
+    fit_retry: u8,
     selected: Option<usize>,
     hovered: Option<usize>,
     dirty: bool,
@@ -98,10 +113,17 @@ pub struct WinScoreApp {
     accidental: i32,
     dotted: bool,
     show_palette: bool,
+    show_group_edit: bool,
+    show_command_bar: bool,
+    command_bar_at_bottom: bool,
+    show_status_bar: bool,
+    show_scale: bool,
     show_help: bool,
     show_about: bool,
     show_text_editor: bool,
     show_staff_editor: bool,
+    show_input_dialog: bool,
+    input_form: InputForm,
     param_page: usize,
     staff_form: StaffForm,
     text_buf: String,
@@ -164,6 +186,8 @@ impl WinScoreApp {
             tex_scale: 1.5,
             zoom: 0.72,
             fit_request: Some(FitMode::Page),
+            last_fit: None,
+            fit_retry: 0,
             selected: None,
             hovered: None,
             dirty: false,
@@ -176,10 +200,23 @@ impl WinScoreApp {
             accidental: 0,
             dotted: false,
             show_palette: false,
+            show_group_edit: false,
+            show_command_bar: true,
+            command_bar_at_bottom: true,
+            show_status_bar: true,
+            show_scale: false,
             show_help: false,
             show_about: false,
             show_text_editor: false,
             show_staff_editor: false,
+            show_input_dialog: false,
+            input_form: InputForm {
+                staff: 1,
+                left: 0.0,
+                p4: 0.0,
+                p5: 1.0,
+                right: 200.0,
+            },
             param_page: 0,
             staff_form: StaffForm {
                 staff: 1,
@@ -224,7 +261,11 @@ impl WinScoreApp {
             }
         }
         if let Ok(cmd) = std::env::var("WINSCORE_CMD") {
-            app.execute_command(&cmd);
+            for part in cmd.split(';') {
+                if !part.trim().is_empty() {
+                    app.execute_command(part.trim());
+                }
+            }
         }
         app
     }
@@ -459,6 +500,17 @@ impl WinScoreApp {
                 4,
                 vec![4.0, staff as f32, p3, level, 999.0, p3 + 12.0, 0.0],
             )),
+            Tool::Line => self.score.add_item(Item::new(
+                4,
+                vec![4.0, staff as f32, p3, level, level, p3 + 10.0, 0.0],
+            )),
+            Tool::Box(shape) => self.score.add_item(Item::new(
+                12,
+                vec![12.0, staff as f32, p3, level, shape as f32, 10.0, 6.0, 1.0],
+            )),
+            Tool::Bracket => self
+                .score
+                .add_item(Item::new(14, vec![14.0, staff as f32, p3, 1.0, 9.0])),
             Tool::Number => self
                 .score
                 .add_item(Item::new(10, vec![10.0, staff as f32, p3, level, 1.0, 1.0])),
@@ -733,6 +785,38 @@ impl WinScoreApp {
         );
     }
 
+    fn flip_selected(&mut self) {
+        let Some(idx) = self.selected else {
+            self.status = "FLIP: select a note or beam first.".into();
+            return;
+        };
+        let code = self.score.items[idx].code;
+        if code == 6 {
+            self.toggle_beam_direction();
+            return;
+        }
+        if code == 1 {
+            self.push_undo();
+            let item = &mut self.score.items[idx];
+            let p5 = item.get(5);
+            let sign = p5.signum();
+            let value = p5.abs().round() as i32;
+            let stem = (value / 10) % 10;
+            let rest = value % 10;
+            let extra = value - (stem * 10 + rest);
+            let new_stem = if stem == 1 { 2 } else { 1 };
+            let new_val = sign * (extra + new_stem * 10 + rest) as f32;
+            item.set(5, new_val);
+            self.mark_changed();
+            self.status = format!(
+                "Stem flipped to {}.",
+                if new_stem == 1 { "up" } else { "down" }
+            );
+            return;
+        }
+        self.status = "FLIP is implemented for notes and beams.".into();
+    }
+
     fn set_beam_count(&mut self, count: i32) {
         let Some(idx) = self.active_beam() else {
             self.status = "Select a Code 6 beam first.".into();
@@ -783,6 +867,41 @@ impl WinScoreApp {
             item.staff(),
             item.p3(),
             item.p4()
+        );
+    }
+
+    fn open_input_dialog(&mut self) {
+        self.input_form.staff = (self.score.highest_staff() + 1).clamp(1, 256);
+        self.input_form.left = 0.0;
+        self.input_form.p4 = 0.0;
+        self.input_form.p5 = 1.0;
+        self.input_form.right = 200.0;
+        self.show_input_dialog = true;
+        self.status = "Enter Staff#, Left pos., Right pos., P4 and P5.".into();
+    }
+
+    fn start_input(&mut self, staff: i32, left: f32, p4: f32, p5: f32, right: f32) {
+        let staff = staff.clamp(1, 256);
+        let p5 = if p5.abs() < 0.001 { 1.0 } else { p5 };
+        let right = if right.abs() < 0.001 { 200.0 } else { right };
+        if !self
+            .score
+            .items
+            .iter()
+            .any(|i| i.code == 8 && i.staff() == staff)
+        {
+            self.push_undo();
+            self.score
+                .add_item(Item::new(8, vec![8.0, staff as f32, left, p4, p5, right]));
+            self.mark_changed();
+        }
+        self.selected = None;
+        self.show_input_dialog = false;
+        self.show_group_edit = false;
+        self.show_palette = false;
+        self.tool = Tool::Note { head: 0, dur: 1.0 };
+        self.status = format!(
+            "Input on staff {staff} (P3 {left:.2}, P4 {p4:.2}, P5 {p5:.2}): choose a note value and click the staff."
         );
     }
 
@@ -844,52 +963,31 @@ impl WinScoreApp {
             // right P6.  A missing staff is created, as in the original
             // five-pass input command.  `STA` is the older short form.
             "IN" | "STA" => {
-                let staff = rest
-                    .first()
-                    .and_then(|s| s.parse::<i32>().ok())
-                    .unwrap_or_else(|| self.score.highest_staff() + 1)
-                    .clamp(1, 256);
-                let left = rest
-                    .get(1)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(0.0);
-                let p4 = rest
-                    .get(2)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(0.0);
-                let p5 = rest
-                    .get(3)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(1.0);
-                let p5 = if p5.abs() < 0.001 { 1.0 } else { p5 };
-                let p6 = rest
-                    .get(4)
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(200.0);
-                if !self
-                    .score
-                    .items
-                    .iter()
-                    .any(|i| i.code == 8 && i.staff() == staff)
-                {
-                    self.push_undo();
-                    self.score.add_item(Item::new(
-                        8,
-                        vec![
-                            8.0,
-                            staff as f32,
-                            left,
-                            p4,
-                            p5,
-                            if p6.abs() < 0.001 { 200.0 } else { p6 },
-                        ],
-                    ));
-                    self.mark_changed();
+                if rest.is_empty() {
+                    self.open_input_dialog();
+                } else {
+                    let staff = rest
+                        .first()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .unwrap_or_else(|| self.score.highest_staff() + 1);
+                    let left = rest
+                        .get(1)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
+                    let p4 = rest
+                        .get(2)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
+                    let p5 = rest
+                        .get(3)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(1.0);
+                    let right = rest
+                        .get(4)
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(200.0);
+                    self.start_input(staff, left, p4, p5, right);
                 }
-                self.tool = Tool::Note { head: 0, dur: 1.0 };
-                self.status = format!(
-                    "Input on staff {staff} (P3 {left:.2}, P4 {p4:.2}, P5 {p5:.2}): choose a note value and click the staff."
-                );
             }
             "NOTE" | "NOTES" | "NOTED" => {
                 let staff = rest
@@ -990,6 +1088,8 @@ impl WinScoreApp {
             "X" | "ESC" => {
                 self.selected = None;
                 self.tool = Tool::Select;
+                self.show_group_edit = false;
+                self.show_palette = false;
                 self.status = "Edit mode ended.".into();
             }
             "DE" | "DEL" => self.delete_selected(),
@@ -1013,6 +1113,17 @@ impl WinScoreApp {
                 self.texture = None;
                 self.status = format!("Zoom {:.0}%.", self.zoom * 100.0);
             }
+            "FH" => self.fit_request = Some(FitMode::Height),
+            "FW" => self.fit_request = Some(FitMode::Width),
+            "FIT" => self.fit_request = Some(FitMode::Page),
+            "Z+" => {
+                self.zoom = (self.zoom * 1.12).min(4.0);
+                self.texture = None;
+            }
+            "Z-" => {
+                self.zoom = (self.zoom / 1.12).max(0.22);
+                self.texture = None;
+            }
             "TOP" => self.pending_scroll = Some(0.0),
             "MID" => self.pending_scroll = Some(0.5),
             "BOT" => self.pending_scroll = Some(1.0),
@@ -1029,10 +1140,25 @@ impl WinScoreApp {
                     _ => self.move_selected(0.0, -d),
                 }
             }
+            "GROUPEDIT" | "GE" => {
+                self.show_group_edit = true;
+                self.show_palette = false;
+                self.tool = Tool::Select;
+                self.status =
+                    "Group edit toolbar.  LJ/LI/J use the current page; X returns.".into();
+            }
+            "SC" | "SCV" => {
+                self.show_scale = true;
+                self.status = "Spacing scale: horizontal 0–200 units over 7.5 inches.".into();
+            }
+            "SCX" => {
+                self.show_scale = false;
+                self.status = "Spacing scale off.".into();
+            }
             "AUTO" => self.connect_beam(false, None),
             "AUTOX" => self.connect_beam(true, None),
             "ADJ" => self.connect_beam(false, None),
-            "FLIP" => self.toggle_beam_direction(),
+            "FLIP" => self.flip_selected(),
             "BEAM2" | "AUTOBEAM" => self.connect_beam(false, None),
             "BEAM+" => {
                 let current = self
@@ -1041,11 +1167,37 @@ impl WinScoreApp {
                     .unwrap_or(1);
                 self.set_beam_count(current + 1);
             }
-            "OS" | "OH" | "OT" => {
+            "OS" => {
                 self.push_undo();
                 self.score.reorder_horizontal();
                 self.mark_changed();
-                self.status = "Items reordered by staff and horizontal position.".into();
+                self.status = "Items reordered by staff and horizontal position (OS).".into();
+            }
+            "OH" => {
+                self.push_undo();
+                self.score.items.sort_by(|a, b| {
+                    a.p3()
+                        .partial_cmp(&b.p3())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| b.staff().cmp(&a.staff()))
+                });
+                self.mark_changed();
+                self.status = "Items reordered by horizontal position (OH).".into();
+            }
+            "OT" => {
+                self.push_undo();
+                self.score.items.sort_by(|a, b| {
+                    a.code
+                        .cmp(&b.code)
+                        .then_with(|| b.staff().cmp(&a.staff()))
+                        .then_with(|| {
+                            a.p3()
+                                .partial_cmp(&b.p3())
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                });
+                self.mark_changed();
+                self.status = "Items reordered by type and staff (OT).".into();
             }
             "PM" => {
                 if let Some(n) = rest.first().and_then(|s| s.parse::<usize>().ok()) {
@@ -1055,11 +1207,11 @@ impl WinScoreApp {
                         self.status = "Select an item before inspecting parameters.".into();
                     }
                 } else {
-                    self.param_page = 1 - self.param_page;
-                    self.status = if self.param_page == 0 {
-                        "Parameter boxes P1–P20.".into()
-                    } else {
-                        "Parameter boxes P21–P30.".into()
+                    self.param_page = (self.param_page + 1) % 3;
+                    self.status = match self.param_page {
+                        0 => "Parameter boxes P1–P20.".into(),
+                        1 => "Parameter boxes P21–P30.".into(),
+                        _ => "Parameter boxes P31–P40.".into(),
                     };
                 }
             }
@@ -1174,13 +1326,27 @@ impl WinScoreApp {
     }
 
     fn apply_fit(&mut self, available: Vec2) {
-        if let Some(mode) = self.fit_request.take() {
+        let mode = if let Some(mode) = self.fit_request.take() {
+            self.last_fit = Some(mode);
+            // The first frame may run before the bottom command/status bars
+            // have claimed their height.  Refit for a few frames so the page
+            // really fits the final viewport.
+            self.fit_retry = 3;
+            Some(mode)
+        } else if self.fit_retry > 0 {
+            self.fit_retry -= 1;
+            self.last_fit
+        } else {
+            None
+        };
+        if let Some(mode) = mode {
             let z = match mode {
                 FitMode::Page => ((available.x - 42.0) / self.page.width)
                     .min((available.y - 42.0) / self.page.height),
                 FitMode::Width => (available.x - 42.0) / self.page.width,
+                FitMode::Height => (available.y - 42.0) / self.page.height,
             };
-            self.zoom = z.clamp(0.25, 3.0);
+            self.zoom = z.clamp(0.22, 3.0);
             self.texture = None;
         }
     }
@@ -1251,6 +1417,36 @@ impl WinScoreApp {
                     );
                 }
             }
+            if self.show_scale {
+                // Keep the on-screen ruler in the page's top margin so it
+                // does not collide with a title/tempo line above the first system.
+                let y = page_rect.min.y + 4.0;
+                let x0 = page_rect.min.x + PAGE_LEFT * self.zoom;
+                let x1 = x0 + 200.0 * SCORE_UNIT * self.zoom;
+                ui.painter().line_segment(
+                    [Pos2::new(x0, y), Pos2::new(x1, y)],
+                    Stroke::new(0.8_f32, Color32::from_rgb(80, 110, 150)),
+                );
+                for u in (0..=200).step_by(10) {
+                    let x = x0 + u as f32 * SCORE_UNIT * self.zoom;
+                    let tall = u % 20 == 0;
+                    let h = if tall { 5.0 } else { 2.5 };
+                    ui.painter().line_segment(
+                        [Pos2::new(x, y), Pos2::new(x, y + h)],
+                        Stroke::new(0.7_f32, Color32::from_rgb(80, 110, 150)),
+                    );
+                    if tall {
+                        ui.painter().text(
+                            Pos2::new(x, y - 1.0),
+                            Align2::CENTER_BOTTOM,
+                            format!("{u}"),
+                            FontId::monospace(9.0),
+                            Color32::from_rgb(60, 85, 120),
+                        );
+                    }
+                }
+            }
+
             if let Some(scroll_frac) = self.pending_scroll.take() {
                 let target = Rect::from_min_size(
                     page_rect.min + Vec2::new(0.0, page_size.y * scroll_frac.clamp(0.0, 1.0)),
@@ -1617,6 +1813,72 @@ impl WinScoreApp {
         self.show_staff_editor = true;
     }
 
+    fn input_dialog_window(&mut self, ctx: &egui::Context) {
+        if !self.show_input_dialog {
+            return;
+        }
+        let mut open = self.show_input_dialog;
+        let mut accept = false;
+        egui::Window::new("Note Input — Code 8 Staff")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                ui.label("Staff range for the five-pass input:");
+                egui::Grid::new("input-form")
+                    .num_columns(4)
+                    .spacing(Vec2::new(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label("Staff");
+                        ui.add(egui::DragValue::new(&mut self.input_form.staff).range(1..=256));
+                        ui.label("Left P3");
+                        ui.add(
+                            egui::DragValue::new(&mut self.input_form.left)
+                                .speed(0.1)
+                                .range(0.0..=200.0),
+                        );
+                        ui.end_row();
+                        ui.label("P4 offset");
+                        ui.add(
+                            egui::DragValue::new(&mut self.input_form.p4)
+                                .speed(0.1)
+                                .range(-100.0..=100.0),
+                        );
+                        ui.label("Size P5");
+                        ui.add(
+                            egui::DragValue::new(&mut self.input_form.p5)
+                                .speed(0.01)
+                                .range(0.2..=2.0),
+                        );
+                        ui.end_row();
+                        ui.label("Right P6");
+                        ui.add(
+                            egui::DragValue::new(&mut self.input_form.right)
+                                .speed(0.1)
+                                .range(0.0..=200.0),
+                        );
+                        ui.label("");
+                        ui.label("");
+                        ui.end_row();
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        accept = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_input_dialog = false;
+                    }
+                });
+            });
+        if accept {
+            let f = self.input_form.clone();
+            self.start_input(f.staff, f.left, f.p4, f.p5, f.right);
+        }
+        self.show_input_dialog &= open;
+    }
+
     fn staff_editor_window(&mut self, ctx: &egui::Context) {
         if !self.show_staff_editor {
             return;
@@ -1824,13 +2086,96 @@ impl WinScoreApp {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("View", |ui| {
-                if ui
-                    .checkbox(&mut self.show_palette, "Items palette")
-                    .changed()
-                {
+            ui.menu_button("Edit", |ui| {
+                if ui.button("Undo   Ctrl+Z").clicked() {
+                    self.do_undo();
                     ui.close_menu();
                 }
+                if ui.button("Redo   Ctrl+Shift+Z").clicked() {
+                    self.do_redo();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Cut").clicked() {
+                    if let Some(idx) = self.selected
+                        && idx < self.score.items.len()
+                    {
+                        self.copied = Some(self.score.items[idx].clone());
+                        self.delete_selected();
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Copy").clicked() {
+                    if let Some(idx) = self.selected {
+                        self.copied = self.score.items.get(idx).cloned();
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Paste").clicked() {
+                    if let Some(mut item) = self.copied.clone() {
+                        self.push_undo();
+                        item.set(3, item.get(3) + 2.0);
+                        let idx = self.score.add_item(item);
+                        self.selected = Some(idx);
+                        self.mark_changed();
+                        self.status = "Pasted item.".into();
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Delete").clicked() {
+                    self.delete_selected();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Flip selected note/beam").clicked() {
+                    self.flip_selected();
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("View", |ui| {
+                ui.menu_button("Toolbars", |ui| {
+                    if ui
+                        .checkbox(&mut self.show_command_bar, "Command bar")
+                        .changed()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut self.command_bar_at_bottom, "Command bar at bottom")
+                        .changed()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut self.show_palette, "Item bar / Items palette")
+                        .changed()
+                    {
+                        self.show_group_edit = false;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut self.show_group_edit, "Group edit toolbar")
+                        .changed()
+                    {
+                        if self.show_group_edit {
+                            self.show_palette = false;
+                            self.tool = Tool::Select;
+                        }
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut self.show_status_bar, "Status bar")
+                        .changed()
+                    {
+                        ui.close_menu();
+                    }
+                    if ui
+                        .checkbox(&mut self.show_scale, "Spacing scale (SC)")
+                        .changed()
+                    {
+                        ui.close_menu();
+                    }
+                });
                 if ui.button("Fit page").clicked() {
                     self.fit_request = Some(FitMode::Page);
                     ui.close_menu();
@@ -1909,6 +2254,16 @@ impl WinScoreApp {
                         ui.close_menu();
                     }
                 });
+            });
+            ui.menu_button("Window", |ui| {
+                if ui.button("Cascade").clicked() {
+                    self.status = "Single-document build: window cascade is not applicable.".into();
+                    ui.close_menu();
+                }
+                if ui.button("Tile").clicked() {
+                    self.status = "Single-document build: window tiling is not applicable.".into();
+                    ui.close_menu();
+                }
             });
             ui.menu_button("Recent Files", |ui| {
                 if self.recent.is_empty() {
@@ -2033,8 +2388,8 @@ impl WinScoreApp {
             return;
         }
         let item_label = self.score.items[idx].label();
-        let mut values = [0.0f32; 30];
-        for n in 0..30 {
+        let mut values = [0.0f32; 40];
+        for n in 0..40 {
             values[n] = self.score.items[idx].get(n + 1);
         }
         let mut changed = Vec::new();
@@ -2059,13 +2414,13 @@ impl WinScoreApp {
                 if item_is_text && ui.small_button("Edit Text").clicked() {
                     edit_text = true;
                 }
-                let page_label = if self.param_page == 0 {
-                    "P21–30"
-                } else {
-                    "P1–20"
+                let page_label = match self.param_page {
+                    0 => "P21–30",
+                    1 => "P31–40",
+                    _ => "P1–20",
                 };
                 if ui.small_button(page_label).clicked() {
-                    self.param_page = 1 - self.param_page;
+                    self.param_page = (self.param_page + 1) % 3;
                 }
                 ui.label(RichText::new(format!("P2 staff {}", item_staff)).small());
             });
@@ -2073,13 +2428,18 @@ impl WinScoreApp {
                 self.open_text_editor(idx);
             }
         });
-        let rows = if self.param_page == 0 { 2 } else { 1 };
+        let (first, count) = match self.param_page {
+            0 => (1, 20),
+            1 => (21, 10),
+            _ => (31, 10),
+        };
+        let rows = count / 10;
         for row in 0..rows {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
                 for col in 0..10 {
-                    let n = self.param_page * 20 + row * 10 + col + 1;
-                    if n > 30 {
+                    let n = first + row * 10 + col;
+                    if n >= first + count {
                         break;
                     }
                     let mut v = values[n - 1];
@@ -2112,9 +2472,61 @@ impl WinScoreApp {
         }
     }
 
+    fn show_bottom_status(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let file = self
+                .score
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "UNTITLED.MUS".into());
+            ui.label(RichText::new(file).size(10.0));
+            if let Some(idx) = self.selected
+                && let Some(item) = self.score.items.get(idx)
+            {
+                ui.separator();
+                ui.label(
+                    RichText::new(format!(
+                        "Item {}  staff {}  P3 {:.2}  P4 {:.2}",
+                        idx + 1,
+                        item.staff(),
+                        item.p3(),
+                        item.p4()
+                    ))
+                    .size(10.0)
+                    .monospace(),
+                );
+            }
+            if self.dirty {
+                ui.separator();
+                ui.label(
+                    RichText::new("Modified")
+                        .size(10.0)
+                        .color(Color32::from_rgb(150, 40, 30)),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let old = self.zoom;
+                egui::ComboBox::from_id_salt("zoom-combo")
+                    .selected_text(format!("{:.0}%", self.zoom * 100.0))
+                    .width(72.0)
+                    .show_ui(ui, |ui| {
+                        for z in [0.5, 0.75, 1.0, 1.5, 2.0, 3.0] {
+                            ui.selectable_value(&mut self.zoom, z, format!("{:.0}%", z * 100.0));
+                        }
+                    });
+                if (self.zoom - old).abs() > 0.0001 {
+                    self.texture = None;
+                }
+                ui.label(RichText::new("Zoom").size(10.0));
+            });
+        });
+    }
+
     fn show_status_and_command(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let width = (ui.available_width() - 16.0) * 0.56;
+            let width = (ui.available_width() - 16.0) * 0.64;
             egui::Frame::default()
                 .fill(Color32::from_rgb(196, 193, 186))
                 .stroke(Stroke::new(1.0_f32, Color32::from_gray(120)))
@@ -2425,6 +2837,20 @@ impl WinScoreApp {
         });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(2.0, 1.0);
+            ui.label(RichText::new("SHAPES").size(9.0).strong());
+            self.tool_button(ui, "LINE", c_line, Tool::Line, "Straight line (Code 4)");
+            self.tool_button(ui, "BOX", c_line, Tool::Box(0), "Box (Code 12)");
+            self.tool_button(ui, "CIRCLE", c_line, Tool::Box(1), "Circle (Code 12)");
+            self.tool_button(
+                ui,
+                "BRACKET",
+                c_bar,
+                Tool::Bracket,
+                "System bracket (Code 14, P5=9)",
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(2.0, 1.0);
             ui.label(RichText::new("MARKINGS").size(9.0).strong());
             self.tool_button(ui, "tr~", c_line, Tool::Trill, "Trill with extension");
             self.tool_button(ui, "8va", c_line, Tool::Ottava(5), "Ottava above");
@@ -2463,11 +2889,110 @@ impl WinScoreApp {
         }
     }
 
+    fn show_group_toolbar(&mut self, ui: &mut egui::Ui) {
+        let font = 9.0;
+        let btn = |ui: &mut egui::Ui, label: &str, color: Color32| -> bool {
+            ui.add(
+                egui::Button::new(
+                    RichText::new(label)
+                        .size(font)
+                        .color(Color32::from_gray(15)),
+                )
+                .fill(color)
+                .stroke(Stroke::new(1.0_f32, Color32::from_gray(90)))
+                .corner_radius(2.0)
+                .min_size(Vec2::new(42.0, 19.0)),
+            )
+            .clicked()
+        };
+        let green = Color32::from_rgb(105, 220, 105);
+        let cyan = Color32::from_rgb(82, 205, 205);
+        let yellow = Color32::from_rgb(240, 225, 60);
+        let pink = Color32::from_rgb(230, 105, 170);
+        let grey = Color32::from_rgb(200, 200, 195);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
+            ui.label(RichText::new("GROUP EDIT").size(9.0).strong());
+            if btn(ui, "FULL PAGE", Color32::from_rgb(195, 195, 190)) {
+                self.fit_request = Some(FitMode::Page);
+            }
+            if btn(ui, "FULL WIDTH", Color32::from_rgb(195, 195, 190)) {
+                self.fit_request = Some(FitMode::Width);
+            }
+            ui.separator();
+            if btn(ui, "LJ", green) {
+                self.execute_command("LJ");
+            }
+            if btn(ui, "LI", green) {
+                self.execute_command("LI");
+            }
+            if btn(ui, "J", green) {
+                self.execute_command("J");
+            }
+            if btn(ui, "LJ ALL", green) {
+                self.execute_command("LJA");
+            }
+            if btn(ui, "FLIP", pink) {
+                self.execute_command("FLIP");
+            }
+            ui.separator();
+            if btn(ui, "OS", yellow) {
+                self.execute_command("OS");
+            }
+            if btn(ui, "OH", yellow) {
+                self.execute_command("OH");
+            }
+            if btn(ui, "OT", yellow) {
+                self.execute_command("OT");
+            }
+            if btn(ui, "UNDO", cyan) {
+                self.do_undo();
+            }
+            if btn(ui, "REDO", cyan) {
+                self.do_redo();
+            }
+            if btn(ui, "DELETE", pink) {
+                self.delete_selected();
+            }
+            if btn(ui, "X", grey) {
+                self.show_group_edit = false;
+                self.status = "Returned to the main command bar.".into();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "LJ/LI/J apply to the current page; select a note or beam for FLIP/DELETE.",
+            )
+            .size(9.0)
+            .color(Color32::from_gray(55)),
+        );
+    }
+
     fn show_note_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
             ui.label(RichText::new("NOTE EDIT").size(9.0).strong());
             self.show_position_buttons(ui);
+            ui.separator();
+            if let Some(idx) = self.selected {
+                ui.label(RichText::new("DOT P31").size(9.0));
+                let mut p31 = self.score.items[idx].get(31);
+                let resp = ui.add(
+                    egui::DragValue::new(&mut p31)
+                        .speed(0.01)
+                        .range(0.0..=4.0)
+                        .max_decimals(3),
+                );
+                if resp
+                    .on_hover_text("Augmentation-dot size factor (0/default = 1.0)")
+                    .changed()
+                {
+                    self.push_undo();
+                    self.score.items[idx].set(31, p31);
+                    self.mark_changed();
+                    self.status = format!("P31 dot size = {p31:.3}.");
+                }
+            }
             ui.separator();
             if ui
                 .add(
@@ -2598,8 +3123,9 @@ impl WinScoreApp {
         let c6 = Color32::from_rgb(230, 105, 170);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
+            if btn(ui, "FULL HEIGHT", c1) { self.fit_request = Some(FitMode::Height); }
+            if btn(ui, "FULL WIDTH", c1) { self.fit_request = Some(FitMode::Width); }
             if btn(ui, "FULL PAGE", c1) { self.fit_request = Some(FitMode::Page); }
-            if btn(ui, "FIT WIDTH", c1) { self.fit_request = Some(FitMode::Width); }
             if btn(ui, "ZOOM −", c2) { self.zoom = (self.zoom / 1.12).max(0.22); self.texture = None; }
             if btn(ui, "ZOOM +", c2) { self.zoom = (self.zoom * 1.12).min(4.0); self.texture = None; }
             if btn(ui, "PLAY", c3) {
@@ -2610,9 +3136,10 @@ impl WinScoreApp {
             }
             if btn(ui, "NEW ITEM", c3) {
                 self.show_palette = true;
+                self.show_group_edit = false;
                 self.status = "Choose an item from the item bar.".into();
             }
-            if btn(ui, "SAVE SAME", c4) { self.save_same(); }
+            if btn(ui, "SAME SAVE", c4) { self.save_same(); }
             if btn(ui, "OS", c4) { self.execute_command("OS"); }
             if btn(ui, "OH", c4) { self.execute_command("OH"); }
             if btn(ui, "OT", c4) { self.execute_command("OT"); }
@@ -2656,10 +3183,14 @@ impl WinScoreApp {
                 }
             }
             if btn(ui, "GROUP EDIT", c3) {
-                self.status = "Group edit: use OS/OH/OT and parameter edits.".into();
+                self.show_group_edit = true;
+                self.show_palette = false;
+                self.tool = Tool::Select;
+                self.status =
+                    "Group edit toolbar.  LJ/LI/J use the current page; X returns.".into();
             }
             if btn(ui, "INPUT", c3) {
-                self.status = "Input mode: choose a note value above and click the staff.".into();
+                self.open_input_dialog();
             }
             if btn(ui, "EDIT INPUT", c3) {
                 self.status = "EDIT INPUT: reconstructing a text input line is future work.".into();
@@ -2676,9 +3207,11 @@ impl WinScoreApp {
                 }
             }
             if btn(ui, "SC", c4) {
+                self.show_scale = true;
                 self.status = "Spacing scale: horizontal 0–200 units over 7.5 inches.".into();
             }
             if btn(ui, "SCX", c4) {
+                self.show_scale = false;
                 self.status = "Spacing scale off.".into();
             }
             if btn(ui, "UNDO", c6) {
@@ -2723,7 +3256,7 @@ impl WinScoreApp {
                     ui.label("Arrows: nudge 1 unit/step  |  Home/End: P3 ±10  |  PageUp/PageDown: P4 ±4\n[ / ]: previous/next staff  |  F2/F3: previous/next item  |  F9: leave edit  |  Delete: delete\nCtrl+Z / Ctrl+Shift+Z: undo / redo  |  Ctrl+S: save  |  Ctrl+O: open  |  F1: help");
                     ui.separator();
                     ui.strong("Command box (SCORE-style)");
-                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nAUTO / AUTOX — connect a selected Code 6 beam\nADJ / FLIP / BEAM+ — adjust or extend a beam\n<-1 <-10 ->1 ->10 ^1 ^10 v1 v10 — position buttons\nSelecting a note opens NOTE EDIT with the same eight buttons\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — toggle P1–P20 / P21–P30 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
+                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nAUTO / AUTOX — connect a selected Code 6 beam\nADJ / FLIP / BEAM+ — adjust or extend a beam\n<-1 <-10 ->1 ->10 ^1 ^10 v1 v10 — position buttons\nSelecting a note opens NOTE EDIT with the same eight buttons\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — cycle P1–P20 / P21–P30 / P31–P40 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
                     ui.separator();
                     ui.strong("File compatibility");
                     ui.label("Reads and writes native binary WinScore .mus files, including code-16 text objects with their original font escapes and word padding. Unknown object codes are preserved even when they are not yet drawn.");
@@ -2791,6 +3324,8 @@ impl eframe::App for WinScoreApp {
             if esc {
                 self.selected = None;
                 self.tool = Tool::Select;
+                self.show_group_edit = false;
+                self.show_palette = false;
             }
             if self.selected.is_some() {
                 let (dx, dy) = ctx.input(|i| {
@@ -2848,6 +3383,9 @@ impl eframe::App for WinScoreApp {
                 self.selected = None;
                 self.tool = Tool::Select;
                 self.status = "Edit mode ended.".into();
+            }
+            if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::I)) {
+                self.open_input_dialog();
             }
             if ctx.input(|i| {
                 i.modifiers.command
@@ -2921,12 +3459,25 @@ impl eframe::App for WinScoreApp {
             .show(ctx, |ui| {
                 self.show_status_and_command(ui);
             });
-        // WinScore's first-level command bar lives at the top.  The item
-        // palette is a second-level screen opened by NEW ITEM (or View →
-        // Items palette) and replaces the command bar while it is open.
+        if self.show_status_bar {
+            egui::TopBottomPanel::bottom("bottom_status")
+                .exact_height(22.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(Color32::from_rgb(212, 209, 201))
+                        .inner_margin(egui::Margin::symmetric(4, 1)),
+                )
+                .show(ctx, |ui| {
+                    self.show_bottom_status(ui);
+                });
+        }
+
+        // The original CommandBar is docked at the bottom; the item/beam/note
+        // context bars replace it as second-level screens.  View → Toolbars
+        // can move the main command bar back to the top.
         if self.show_palette {
             egui::TopBottomPanel::top("palette")
-                .exact_height(100.0)
+                .exact_height(126.0)
                 .frame(
                     egui::Frame::default()
                         .fill(Color32::from_rgb(204, 201, 193))
@@ -2934,6 +3485,17 @@ impl eframe::App for WinScoreApp {
                 )
                 .show(ctx, |ui| {
                     self.show_palette(ui);
+                });
+        } else if self.show_group_edit {
+            egui::TopBottomPanel::top("group_edit")
+                .exact_height(50.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(Color32::from_rgb(204, 201, 193))
+                        .inner_margin(egui::Margin::symmetric(4, 1)),
+                )
+                .show(ctx, |ui| {
+                    self.show_group_toolbar(ui);
                 });
         } else if self
             .selected
@@ -2967,17 +3529,25 @@ impl eframe::App for WinScoreApp {
                 .show(ctx, |ui| {
                     self.show_beam_toolbar(ui);
                 });
-        } else {
-            egui::TopBottomPanel::top("toolbar")
-                .exact_height(48.0)
-                .frame(
-                    egui::Frame::default()
-                        .fill(Color32::from_rgb(201, 198, 190))
-                        .inner_margin(egui::Margin::symmetric(4, 1)),
-                )
-                .show(ctx, |ui| {
-                    self.show_main_toolbar(ui);
-                });
+        } else if self.show_command_bar {
+            let frame = egui::Frame::default()
+                .fill(Color32::from_rgb(201, 198, 190))
+                .inner_margin(egui::Margin::symmetric(4, 1));
+            if self.command_bar_at_bottom {
+                egui::TopBottomPanel::bottom("toolbar_bottom")
+                    .exact_height(48.0)
+                    .frame(frame)
+                    .show(ctx, |ui| {
+                        self.show_main_toolbar(ui);
+                    });
+            } else {
+                egui::TopBottomPanel::top("toolbar")
+                    .exact_height(48.0)
+                    .frame(frame)
+                    .show(ctx, |ui| {
+                        self.show_main_toolbar(ui);
+                    });
+            }
         }
 
         egui::CentralPanel::default()
@@ -2987,6 +3557,7 @@ impl eframe::App for WinScoreApp {
                 self.draw_canvas(ui);
             });
 
+        self.input_dialog_window(ctx);
         self.staff_editor_window(ctx);
         self.text_editor_window(ctx);
         self.help_window(ctx);

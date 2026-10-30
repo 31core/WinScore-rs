@@ -16,10 +16,19 @@
 | Code 7 类型 | 用 `8/15` 表示 8va/15ma，与文档的 `5/6/7/8` 不一致 | 改为 `5=8va`、`6=15ma`、`7=8vb`、`8=15mb`；补 `1=trill`、`2=mordent`、`3=inverted mordent`、`4=turn`；保留旧文件兼容 | 05 §5.7 |
 | Code 8 P7 | 单线 staff 被强制画成 2 线；P11 线宽未用 | 支持 1 线、`-1` 隐藏、三位 `XYZ` 起始线/线数；P11 以 600 dpi 像素增量参与线宽 | 05 §5.8 |
 | Code 8 P10 | 始终按英寸换算 | 按 trailer 的 measurement code 在英寸/厘米之间切换 | 03 §3.3.6 |
+| P4 / clef | 所有 clef 共用 `level_y(7+p4)` | 音符 P4 与 clef 无关；clef 按 Bravura 设计锚点放置（treble 6.76、bass 7.51、alto 7.00、tenor 8.06…），支持 soprano/mezzo/baritone 与 8/15 标记 | 03 §3.2、10 §10.3 |
+| P10 / 和弦 | P10=10 只移 0.55 space | P10 以真实头宽计量（黑/二分 1.18 sp，全音符 1.69 sp）；P10≥100 时变音跟随 | 05 §5.1、10 §10.4 |
+| 变音记号 | 固定 0.92-space 偏置，P5 小数被错误乘整 space | 右边缘按头宽 + 0.2 sp 定位，使用实际 glyph 宽度；P5 小数按 step 左/右移；P29 缩放 | 05 §5.1、10 §10.5 |
+| P31 附点 | 固定半径，无参数入口 | P31 作为附点大小倍率（0/1=正常），NOTE EDIT 直接输入，PM 第三页可编辑 P31–P40；P9 的 +100/+1000 和 P19 也生效 | 05 §5.1、官方 help P31 |
+| 排版宽度 | 仅 20×P7 | 碰撞宽度取 max(节奏宽度, 头宽+变音宽+附点宽)；AFT 之外的密度也能保证不重叠 | 04 §4.3.1 提醒、10 §10.6 |
+| 主 CommandBar | 固定在顶部 | 默认停靠底部（View → Toolbars 可切回顶部）；新增底部状态栏、缩放下拉、SC 标尺 | 11 §11.1、§11.7 |
+| Group Edit | 按钮只显示说明 | 可切换 GROUP EDIT 工具栏，含 LJ/LI/J/LJ ALL/FLIP/OS/OH/OT/UNDO/REDO/DELETE/X | 11 §11.5 |
+| IN / INPUT | 直接改工具，无对话框 | 无参数 `IN` 或 INPUT 打开 Note Input 对话框；带参数仍可直接创建 staff | 11 §11.6.1、§11.8.1 |
+| ItemBar 形状 | 缺少 Line/Box/Circle/Bracket | 增加 SHAPES 行：Code 4 直线、Code 12 方框/圆、Code 14 括号；ItemBar 高度相应增加 | 11 §11.4 |
 | Staff 创建界面 | P7 只能 0–200 | 可输入 `-1..999`，说明 `XYZ` 编码 | 05 §5.8 |
 | 大文件头 | 写入超过 65,535 words 直接报错 | 超过 32,767 words 写 u32 头；读取端按文件长度自动判 16/32 位 | 02 §2.1、09 M0 |
 | `IN` 参数 | 只接受 staff 号，其余参数忽略 | 接受 `IN a b c d e` = staff/P3/P4/P5/P6，缺失 staff 时按参数创建 | 07 §7.5.1 |
-| 参数矩阵 | 只有 P1–P20 | `PM` 或参数栏按钮切换 P1–P20 / P21–P30；`PM n` 查看 Pn | 06 §6.2.1 |
+| 参数矩阵 | 只有 P1–P20 | `PM` 或参数栏按钮循环 P1–P20 / P21–P30 / P31–P40；`PM n` 查看 Pn | 06 §6.2.1 |
 | 键盘 | 方向键固定 0.5；无 Home/End/PageUp/PageDown/`[`/`]`/F2/F3/F9 | 按规格改为 1 单位/1 step，并补齐导航键 | 07 §7.3.1 |
 | 符杠创建/连接 | Code 6 一放下就自动扫描音符并连接，没有未连接状态和 AUTO 二级菜单 | 新增 BEAM EDIT 二级栏；拖动创建未连接 Beam（P30=2），AUTO/AUTOX/ADJ 连接并写入端点、P4/P5、P7、P9；拖动移动整条 Beam | 08 Beam、05 §5.6 |
 | 位置微调 | 只有命令行 `L/R/U/D` | BEAM EDIT 增加 `<-1/<-10/->1/->10/^1/^10/v1/v10`；普通音符选中时显示 NOTE EDIT，仅保留这八个位置按钮，不显示 AUTO/符杠数 | 06 §6.3、07 §7.3.2 |
@@ -73,18 +82,15 @@
 
 隐藏 staff 仍参与对象定位，但 `page_size_for` 仍只看 staff 的 P4/P10，不会因为隐藏 staff 自动缩小页面。原版用 `H`/`HS` 显式设置页面高度；该对话框尚未实现。
 
-### Code 3 谱号映射
-
-文档 05 §5.3 的 `P5=6/7/8`（soprano/mezzo/baritone）当前仍回退为不绘制。常见 treble/bass/alto/tenor/percussion 已覆盖。完整 C/F clef 的线位锚点需要单独校准，避免“画出来但位置错”。
-
 ## 4. 回归测试
 
-`cargo test --all-targets` 当前 26 项：
+`cargo test --all-targets` 当前 32 项：
 
-- `src/layout.rs`：Lineup、Justify 填满、窄区间警告/等量削减、和弦共槽（4）；
 - `src/beam.rs`：AUTO 连接上下符干、按最短音符取 beam 数、单音符拒绝（3）；
+- `src/engrave.rs`：P31 附点倍率、P10 头宽、clef 锚点（3）；
+- `src/layout.rs`：Lineup/Justify、窄区间削减、和弦共槽、变音/附点碰撞宽度、二度自动 P10（6）；
 - `src/app.rs`：Beam 整体移动、普通音符只移动 P3/P4（2）；
-- `tests/engrave.rs`：样本渲染、PDF/SVG、编辑、音频、页面尺寸、item-bar 标记、Code 8 创建、P7 单线/隐藏、P10 英制/公制、全部 barline 类型、AUTO 前后 Beam 渲染（11）；
+- `tests/engrave.rs`：样本渲染、PDF/SVG、编辑、音频、页面尺寸、item-bar 标记、Code 8 创建、P7 单线/隐藏、P10 英制/公制、全部 barline 类型、AUTO 前后 Beam 渲染、Line/Box/Circle/Bracket（12）；
 - `tests/mus_roundtrip.rs`：三个样本 bit-exact、损坏模板、计数一致性、大文件 u32 头（4）；
 - `src/model.rs`：文本解码/字体 run（2）。
 

@@ -723,8 +723,9 @@ impl<'a> Engraver<'a> {
             return;
         };
         let p5 = item.get(5);
-        let name = clef_glyph(p5);
-        let Some(name) = name else { return };
+        let Some((name, center_level)) = clef_anchor(p5) else {
+            return;
+        };
         let mut p4 = item.get(4);
         let mut size = if item.get(6).abs() < 0.001 {
             1.0
@@ -735,11 +736,22 @@ impl<'a> Engraver<'a> {
             p4 -= 100.0;
             size *= 0.58;
         }
-        let x = st.x0 + item.get(3) * SCORE_UNIT + item.get(15) * 0.35;
-        let y = st.level_y(7.0 + p4);
+        // P4=1 is the standard position; the glyph's bbox centre is placed on
+        // the clef's design line (G4/F3/C4/...) and then shifted by P4-1.
+        let x = st.x0 + item.get(3) * SCORE_UNIT + item.get(15) * 0.5 * (st.space * 0.5);
+        let y = st.level_y(center_level + p4 - 1.0);
         let font_size = 4.0 * st.space * size;
+        let color = item_color(item);
         if let Some(path) = self.fonts.music_glyph_centered(name, font_size, x, y, 0.0) {
-            self.draws.fill(path, item_color(item));
+            self.draws.fill(path, color);
+        }
+        if let Some((label, above)) = clef_octave_label(p5) {
+            let ly = if above {
+                y - 2.9 * st.space
+            } else {
+                y + 3.1 * st.space
+            };
+            self.draw_plain_text(label, x + 0.9 * st.space, ly, 7.0 * st.size, 2, color, 0.0);
         }
         self.add_hit(
             idx,
@@ -752,16 +764,11 @@ impl<'a> Engraver<'a> {
         let Some(st) = self.staves.get(&item.staff()).cloned() else {
             return;
         };
-        let glyph = match p5 {
-            0 => G_TREBLE,
-            1 => G_BASS,
-            2 => G_ALTO,
-            3 => G_TENOR,
-            4 => G_PERCUSSION,
-            _ => return,
+        let Some((glyph, center_level)) = clef_anchor(p5 as f32) else {
+            return;
         };
         let x = st.x0 + item.get(3) * SCORE_UNIT;
-        let y = st.level_y(7.0 + item.get(4));
+        let y = st.level_y(center_level + item.get(4) - 1.0);
         let size = if item.get(6).abs() < 0.001 {
             1.0
         } else {
@@ -1141,11 +1148,23 @@ impl<'a> Engraver<'a> {
         }
         if n.accidental != 0 {
             if let Some(g) = accidental_glyph(n.accidental) {
-                let ax = hx - 0.92 * st.space - n.accidental_space * st.space;
-                if let Some(path) =
-                    self.fonts
-                        .music_glyph_centered(g, 4.0 * st.space * n.size, ax, n.y, 0.0)
-                {
+                let acc_size = {
+                    let p29 = self.score.items[idx].get(29);
+                    if p29.abs() < 0.001 { 1.0 } else { p29.abs() }
+                };
+                let acc_w = accidental_width(st.space, n.size * acc_size, n.accidental);
+                // P10<100 moves the head but leaves the accidental at the
+                // note's original column; P10>=100 carries it along.
+                let anchor_hx = hx - if n.acc_follows_p10 { 0.0 } else { n.p10_dx };
+                let ax = anchor_hx - n.head_width * 0.5 - 0.20 * st.space - acc_w * 0.5
+                    + n.accidental_shift * 0.5 * st.space;
+                if let Some(path) = self.fonts.music_glyph_centered(
+                    g,
+                    4.0 * st.space * n.size * acc_size,
+                    ax,
+                    n.y,
+                    0.0,
+                ) {
                     self.draws.fill(path, n.color);
                 }
                 if n.acc_parens {
@@ -1156,7 +1175,7 @@ impl<'a> Engraver<'a> {
                     for p in self.fonts.text_run_paths(
                         &shaped,
                         4.0 * st.space * n.size,
-                        Pt::new(ax - 1.2 * st.space, n.y),
+                        Pt::new(ax - acc_w * 0.5 - 0.8 * st.space, n.y),
                         0.0,
                     ) {
                         self.draws.fill(p, n.color);
@@ -1167,19 +1186,26 @@ impl<'a> Engraver<'a> {
         self.draw_ledger_lines(n, &st);
         // Dots.
         if n.dots > 0 {
-            // Measured from the WinScore PDF: the augmentation dot is only
-            // about 0.23 of a staff space across (radius ≈ 0.115 space).
-            let r = (0.115 * st.space).max(0.55);
+            // P31 is the augmentation-dot size factor.  P31=0 means the
+            // default; 0.5 makes the dots half size, 2.0 doubles them.
+            let r = augmentation_dot_radius(st.space, n.size, n.dot_size);
             // On a line the dot goes in the adjacent space (half a space
             // away); in a space it goes in the next space (a full space).
-            let dot_y = if n.level.round() as i32 % 2 == 0 {
+            let mut dot_y = if n.dot_below {
+                n.y + st.space * 0.5
+            } else if n.level.round() as i32 % 2 == 0 {
                 n.y - st.space
             } else {
                 n.y - st.space * 0.5
             };
+            dot_y -= n.dot_vertical * 0.5 * st.space;
+            let head_shift = if n.dot_right { n.head_width } else { 0.0 };
             for i in 0..n.dots {
-                let x = hx + (1.0 + i as f32 * 0.55) * st.space;
-                self.draws.fill(circle_path(x, dot_y, r * n.size), n.color);
+                let x = hx
+                    + (1.0 + i as f32 * 0.55) * st.space
+                    + n.dot_shift * 0.5 * st.space
+                    + head_shift;
+                self.draws.fill(circle_path(x, dot_y, r), n.color);
             }
         }
         // Articulations.
@@ -1199,7 +1225,7 @@ impl<'a> Engraver<'a> {
         }
         let level = n.level;
         let hx = n.head_x(st.space);
-        let half_w = 0.92 * st.space * n.size;
+        let half_w = 0.62 * st.space * n.size;
         let thickness = (0.7 * st.size).max(0.45);
         if level > 11.0 {
             let mut l = 13.0;
@@ -2088,9 +2114,17 @@ struct NoteInfo {
     stem_extra: f32,
     flags: i32,
     dots: i32,
+    dot_size: f32,
+    dot_shift: f32,
+    dot_vertical: f32,
+    dot_below: bool,
+    dot_right: bool,
     accidental: i32,
-    accidental_space: f32,
+    accidental_shift: f32,
     acc_parens: bool,
+    head_width: f32,
+    p10_dx: f32,
+    acc_follows_p10: bool,
     size: f32,
     color: Color,
     mark: f32,
@@ -2126,13 +2160,15 @@ impl NoteInfo {
         let stemmed = (stem_digit == 1 || stem_digit == 2) && !matches!(head_code, 2 | 3 | 7);
         let up = stem_digit != 2;
         let accidental = (p5.round() as i32) % 10;
-        let accidental_space = {
+        // P5's fraction is measured in scale steps.  A leading 9 reverses the
+        // direction, so P5=12.935 moves the accidental 0.35 step to the right.
+        let accidental_shift = {
             let frac = p5.fract().abs();
             if frac > 0.0001 {
-                if (frac * 100.0).round() as i32 / 10 == 9 {
-                    -(frac * 100.0 - 90.0) / 10.0
+                if (frac * 10.0).floor() as i32 == 9 {
+                    (frac * 100.0 - 90.0) / 10.0
                 } else {
-                    frac * 10.0
+                    -frac * 10.0
                 }
             } else {
                 0.0
@@ -2142,6 +2178,29 @@ impl NoteInfo {
         let p9 = item.get(9);
         let p9i = p9.round() as i32;
         let dots = (p9i / 10).abs() % 10;
+        // P9's fraction shifts the augmentation dots; a leading 9 reverses
+        // the direction just like the accidental field in P5.
+        let dot_shift = {
+            let frac = p9.fract().abs();
+            if frac > 0.0001 {
+                if (frac * 10.0).floor() as i32 == 9 {
+                    -(frac * 100.0 - 90.0) / 10.0
+                } else {
+                    frac * 10.0
+                }
+            } else {
+                0.0
+            }
+        };
+        let dot_vertical = item.get(19);
+        let dot_below = (p9i.abs() / 100) % 10 == 1;
+        let dot_right = (p9i.abs() / 1000) >= 1;
+        let p31 = item.get(31);
+        let dot_size = if p31.abs() < 0.0001 {
+            1.0
+        } else {
+            p31.abs().clamp(0.05, 4.0)
+        };
         let explicit_flags = p9i.abs() % 10;
         let flags = if explicit_flags > 0 {
             explicit_flags
@@ -2159,7 +2218,13 @@ impl NoteInfo {
         if stem_extra.abs() >= 100.0 {
             stem_extra = stem_extra.abs() - 100.0;
         }
-        let x = st.x0 + item.p3() * SCORE_UNIT + item.get(10) * 0.055 * st.space;
+        // P10 is measured in tenths of a notehead width.  P10=10 therefore
+        // moves a black head by 1.18 staff spaces, not half a space.
+        let p10 = item.get(10);
+        let head_width = notehead_width(st.space, size, head_code);
+        let p10_dx = p10_head_offset(st.space, size, head_code, p10);
+        let acc_follows_p10 = p10.abs() >= 100.0;
+        let x = st.x0 + item.p3() * SCORE_UNIT + p10_dx;
         let y = st.level_y(level);
         let color = item_color(item);
         Some(Self {
@@ -2174,9 +2239,17 @@ impl NoteInfo {
             stem_extra,
             flags,
             dots,
+            dot_size,
+            dot_shift,
+            dot_vertical,
+            dot_below,
+            dot_right,
             accidental,
-            accidental_space,
+            accidental_shift,
             acc_parens: item.get(5).abs() >= 100.0,
+            head_width,
+            p10_dx,
+            acc_follows_p10,
             size,
             color,
             mark: item.get(11),
@@ -2248,24 +2321,83 @@ fn text_font_size(item: &Item, staff_size: f32) -> f32 {
     (10.0 * staff_size * v).clamp(1.0, 500.0)
 }
 
-fn clef_glyph(p5: f32) -> Option<char> {
-    if (p5 - 0.0).abs() < 0.001 {
-        Some(G_TREBLE)
-    } else if (p5 - 1.0).abs() < 0.001 {
-        Some(G_BASS)
-    } else if (p5 - 2.0).abs() < 0.001 {
-        Some(G_ALTO)
-    } else if (p5 - 3.0).abs() < 0.001 {
-        Some(G_TENOR)
-    } else if (p5 - 4.0).abs() < 0.001 {
-        Some(G_PERCUSSION)
-    } else if (p5 - 0.8).abs() < 0.01 || (p5 - 0.88).abs() < 0.01 || (p5 - 0.15).abs() < 0.01 {
-        Some(G_TREBLE)
+fn clef_octave_label(p5: f32) -> Option<(&'static str, bool)> {
+    if (p5 - 0.8).abs() < 0.01 {
+        Some(("8", false))
+    } else if (p5 - 0.88).abs() < 0.01 {
+        Some(("8", true))
+    } else if (p5 - 0.15).abs() < 0.01 {
+        Some(("15", true))
     } else if (p5 - 1.8).abs() < 0.01 {
-        Some(G_BASS)
+        Some(("8", false))
     } else {
         None
     }
+}
+
+fn clef_anchor(p5: f32) -> Option<(char, f32)> {
+    // Bravura bbox centres measured from the font (see
+    // 10-engraving-caveats.md §10.3.1).  `level` is where the bbox centre must
+    // sit for the clef's design line; P4=1 adds the standard offset.
+    if (p5 - 0.0).abs() < 0.001
+        || (p5 - 0.8).abs() < 0.01
+        || (p5 - 0.88).abs() < 0.01
+        || (p5 - 0.15).abs() < 0.01
+    {
+        Some((G_TREBLE, 6.76))
+    } else if (p5 - 1.0).abs() < 0.001 || (p5 - 1.8).abs() < 0.01 {
+        Some((G_BASS, 7.51))
+    } else if (p5 - 2.0).abs() < 0.001 {
+        Some((G_ALTO, 7.00))
+    } else if (p5 - 3.0).abs() < 0.001 {
+        Some((G_TENOR, 8.06))
+    } else if (p5 - 4.0).abs() < 0.001 {
+        Some((G_PERCUSSION, 7.00))
+    } else if (p5 - 5.0).abs() < 0.001 {
+        Some((G_TAB, 7.00))
+    } else if (p5 - 6.0).abs() < 0.001 {
+        Some((G_ALTO, 3.00))
+    } else if (p5 - 7.0).abs() < 0.001 {
+        Some((G_ALTO, 5.00))
+    } else if (p5 - 8.0).abs() < 0.001 {
+        Some((G_ALTO, 11.00))
+    } else {
+        None
+    }
+}
+
+fn p10_head_offset(space: f32, size: f32, head_code: i32, p10: f32) -> f32 {
+    if p10.abs() < 1.0 && p10.abs() > 0.0001 {
+        p10 * 0.5 * space
+    } else {
+        let head_width = notehead_width(space, size, head_code);
+        let units = (p10.abs() % 100.0) / 10.0;
+        units * head_width * p10.signum()
+    }
+}
+
+fn notehead_width(space: f32, size: f32, head_code: i32) -> f32 {
+    let base = if matches!(head_code, 2 | 3) {
+        1.69
+    } else {
+        1.18
+    };
+    base * space * size
+}
+
+fn accidental_width(space: f32, size: f32, accidental: i32) -> f32 {
+    let base = match accidental {
+        1 => 0.90,
+        2 => 1.00,
+        3 => 0.67,
+        4 | 5 => 1.35,
+        _ => 1.00,
+    };
+    base * space * size
+}
+
+fn augmentation_dot_radius(space: f32, note_size: f32, factor: f32) -> f32 {
+    (0.115 * space * note_size * factor).max(0.25)
 }
 
 fn accidental_glyph(acc: i32) -> Option<char> {
@@ -2487,4 +2619,41 @@ pub fn page_shadow(draws: &mut DrawList, page: &EngravedPage) {
         Color::LIGHT_GRAY,
         0.6,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn p10_moves_by_a_full_head_width_not_half_a_space() {
+        // P10=10 must move a black head by 1.18 staff spaces.
+        let d = p10_head_offset(6.3, 1.0, 0, 10.0);
+        assert!((d - 1.18 * 6.3).abs() < 0.001);
+        assert!(d > 6.3 * 0.55);
+        // A whole note is wider.
+        let dw = p10_head_offset(6.3, 1.0, 2, 10.0);
+        assert!((dw - 1.69 * 6.3).abs() < 0.001);
+        // P10=110 carries the accidental, but the head shift is still one.
+        assert!((p10_head_offset(6.3, 1.0, 0, 110.0) - 1.18 * 6.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn p31_scales_augmentation_dots() {
+        let base = augmentation_dot_radius(6.3, 1.0, 1.0);
+        assert!((augmentation_dot_radius(6.3, 1.0, 0.5) - base * 0.5).abs() < 0.001);
+        assert!((augmentation_dot_radius(6.3, 1.0, 2.0) - base * 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn clef_anchor_uses_the_design_line() {
+        assert_eq!(clef_anchor(0.0).unwrap().0, G_TREBLE);
+        assert!((clef_anchor(0.0).unwrap().1 - 6.76).abs() < 0.001);
+        assert!((clef_anchor(1.0).unwrap().1 - 7.51).abs() < 0.001);
+        assert!((clef_anchor(2.0).unwrap().1 - 7.00).abs() < 0.001);
+        assert!((clef_anchor(3.0).unwrap().1 - 8.06).abs() < 0.001);
+        assert_eq!(clef_anchor(6.0).unwrap().1, 3.00);
+        assert_eq!(clef_anchor(7.0).unwrap().1, 5.00);
+        assert_eq!(clef_anchor(8.0).unwrap().1, 11.00);
+    }
 }

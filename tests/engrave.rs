@@ -220,3 +220,24 @@ fn auto_beam_connects_and_engraves_both_states() {
     assert!(after.hits.iter().any(|h| h.item == beam_idx));
     assert!(after.draws.paints.len() > 10);
 }
+
+#[test]
+fn engraves_line_box_circle_and_bracket_tools() {
+    let fonts = FontBook::load();
+    let mut score = Score::load("samples/mozart.mus").unwrap();
+    score.add_item(Item::new(4, vec![4.0, 1.0, 30.0, 12.0, 12.0, 50.0, 0.0]));
+    score.add_item(Item::new(
+        12,
+        vec![12.0, 1.0, 60.0, 12.0, 0.0, 10.0, 6.0, 1.0],
+    ));
+    score.add_item(Item::new(
+        12,
+        vec![12.0, 1.0, 80.0, 12.0, 1.0, 6.0, 6.0, 1.0],
+    ));
+    score.add_item(Item::new(14, vec![14.0, 1.0, 90.0, 2.0, 9.0]));
+    let page = Engraver::new(&score, &fonts).engrave();
+    assert!(page.draws.paints.len() > 50);
+    for p in &page.draws.paints {
+        assert!(p.path.min.x.is_finite() && p.path.min.y.is_finite());
+    }
+}

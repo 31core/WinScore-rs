@@ -16,8 +16,15 @@ model, and renders a letter-size page with real vector outlines.
 
 ### A real WinScore-style desktop app
 
-* Classic light-grey, bevel-edged UI with the familiar **two colourful button banks**,
-  item palette, P1–P20/P21–P30 parameter matrix, status/message box and SCORE-style command line.
+* Classic light-grey, bevel-edged UI with the familiar colourful **CommandBar docked at
+  the bottom** (View → Toolbars can move it back to the top), item palette,
+  P1–P20/P21–P30/P31–P40 parameter matrix, status/message box and SCORE-style command line.
+* Bottom status bar with current item/position, modified flag and a 50/75/100/150/200/300%
+  zoom selector.  `SC`/`SCX` show or hide a 0–200 spacing ruler in the page margin.
+* **Group Edit** toolbar (`GROUP EDIT`/`GROUPEDIT`) with LJ/LI/J/LJ ALL, FLIP, OS/OH/OT,
+  undo/redo and delete; `X` returns to the main CommandBar.
+* **Note Input** dialog for `IN` without arguments (or the INPUT button), plus direct
+  `IN staff left P4 P5 right` creation.
 * Open, save, save-as, recent files, and a directory browser for `.mus` files.
 * Click to select any object; drag to move; arrow keys nudge; Delete removes; undo/redo.
 * Edit every numeric parameter directly in the P1–P20 / P21–P30 boxes, or use the command box:
@@ -29,8 +36,9 @@ model, and renders a letter-size page with real vector outlines.
   `LJ 1 8 0 200`.  The original "Not enough space" warning and equal width reduction
   are reproduced; beam endpoints follow the moved notes.
 * Palette tools place notes, rests, clefs, meters, key signatures, barlines, braces,
-  beams, slurs, hairpins, trills, ottavas (8va/8vb/15ma/15mb), pedals, first/second
-  endings, text, dynamics, rehearsal numbers and more.  Barline P5 types follow the
+  beams, slurs, hairpins, lines, boxes, circles, brackets, trills, ottavas
+  (8va/8vb/15ma/15mb), pedals, first/second endings, text, dynamics, rehearsal
+  numbers and more.  Barline P5 types follow the
   documented single/double/final/left-repeat/right-repeat/double-repeat encoding.
 * **Beam workflow like the original**: choose `NEW ITEM → BEAM` and click-drag across
   the notes.  The beam is placed unconnected; it appears in a dedicated **BEAM EDIT**
@@ -71,6 +79,13 @@ model, and renders a letter-size page with real vector outlines.
 * Full object engraver for notes, chords, rests, clefs, key signatures, meters, barlines,
   braces/brackets, beams, slurs/ties, endings, tuplets, text, dynamics, numbers,
   hairpins, trills, ottavas, pedal lines, boxes/circles and articulation marks.
+* **Updated engraving details from the 2026 documentation**: P4 is a written staff
+  position independent of clef; clefs are anchored by their design line (treble G4,
+  bass F3, alto/tenor C4, plus soprano/mezzo/baritone); P10 moves a notehead by a real
+  head width and P10≥100 carries the accidental; accidental placement uses the actual
+  glyph width and the P5 fractional step offset; P31 scales augmentation dots
+  (`0`/`1` = normal, `1.1` = 10% larger, etc.); P9's `+100`/`+1000` controls place
+  dots below the line or one head-width to the right.
 * **Rhythm-aware secondary beams** — a beam group of eighth + two sixteenths gets a full
   primary beam and a partial secondary beam, not a solid block.
 * **Original beam geometry** — stems sit at the SCORE P3 coordinate, beams are 0.5 staff
@@ -188,9 +203,10 @@ Current tests cover:
 * bit-exact `.mus` round-trips for the complete supplied samples;
 * tolerant parsing of the damaged `000.mus` template without panics;
 * vector export headers and page geometry;
-* Lineup/Justify geometry, narrow-range warning and chord slots;
+* Lineup/Justify geometry, narrow-range warning, chord slots and accidental/dot collision widths;
 * whole-object movement for beams/slurs/lines and note line/space snapping;
 * beam placement/connection plans (AUTO, AUTOX, beam counts, opposite stems);
+* P31 dot scaling, P10 head offsets, clef anchors and new GUI state;
 * 32-bit headers for scores above 32,767 words;
 * Code 8 P7 line-count/invisible forms and every barline P5 type;
 * editing, text insertion, save/reparse and word-count consistency;
