@@ -36,6 +36,9 @@ model, and renders a letter-size page with real vector outlines.
   the notes.  The beam is placed unconnected; it appears in a dedicated **BEAM EDIT**
   bar where **AUTO** (or `AUTOX` for opposite stems) aligns it to the note stems and
   derives the beam count.  The beam can be dragged as a whole before or after AUTO.
+  The same bar exposes `<-1`, `<-10`, `->1`, `->10`, `^1`, `^10`, `v1`, `v10` position
+  buttons; selecting an ordinary note opens a NOTE EDIT bar with only those position
+  controls (AUTO/beam-count controls are hidden because they do not apply).
 * **Create Code 8 Staff** dialog (Format menu or STAFF in the item bar) writes a real
   Code 8 staff with P2/P3/P4/P5/P6/P7/P9/P10 columns; duplicate staff numbers are
   rejected, and the page is re-engraved immediately.
@@ -124,6 +127,7 @@ back to the bundled metrically compatible Liberation Serif.
 | Drag object | Move it |
 | Double-click text | Edit text |
 | Arrow keys | Move selected object 1 unit / 1 scale step |
+| Drag a note vertically | Snap to the nearest staff line or space |
 | Home / End | Move P3 by 10 units |
 | PageUp / PageDown | Move P4 by 4 steps |
 | `[` / `]` | Move selected object to the previous / next staff |
@@ -185,6 +189,7 @@ Current tests cover:
 * tolerant parsing of the damaged `000.mus` template without panics;
 * vector export headers and page geometry;
 * Lineup/Justify geometry, narrow-range warning and chord slots;
+* whole-object movement for beams/slurs/lines and note line/space snapping;
 * beam placement/connection plans (AUTO, AUTOX, beam counts, opposite stems);
 * 32-bit headers for scores above 32,767 words;
 * Code 8 P7 line-count/invisible forms and every barline P5 type;

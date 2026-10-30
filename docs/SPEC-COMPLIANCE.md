@@ -22,6 +22,8 @@
 | 参数矩阵 | 只有 P1–P20 | `PM` 或参数栏按钮切换 P1–P20 / P21–P30；`PM n` 查看 Pn | 06 §6.2.1 |
 | 键盘 | 方向键固定 0.5；无 Home/End/PageUp/PageDown/`[`/`]`/F2/F3/F9 | 按规格改为 1 单位/1 step，并补齐导航键 | 07 §7.3.1 |
 | 符杠创建/连接 | Code 6 一放下就自动扫描音符并连接，没有未连接状态和 AUTO 二级菜单 | 新增 BEAM EDIT 二级栏；拖动创建未连接 Beam（P30=2），AUTO/AUTOX/ADJ 连接并写入端点、P4/P5、P7、P9；拖动移动整条 Beam | 08 Beam、05 §5.6 |
+| 位置微调 | 只有命令行 `L/R/U/D` | BEAM EDIT 增加 `<-1/<-10/->1/->10/^1/^10/v1/v10`；普通音符选中时显示 NOTE EDIT，仅保留这八个位置按钮，不显示 AUTO/符杠数 | 06 §6.3、07 §7.3.2 |
+| 音符拖动吸附 | 上下拖动按 0.5 step 吸附 | 普通音符上下拖动吸附到最近的整数 P4（线或间） | 03 §3.2.1 |
 | CLI | 只能渲染 | 增加 `--li`、`--lj`，便于批处理和回归 | — |
 
 ## 2. 仍需补齐的规格
@@ -77,10 +79,11 @@
 
 ## 4. 回归测试
 
-`cargo test --all-targets` 当前 24 项：
+`cargo test --all-targets` 当前 26 项：
 
 - `src/layout.rs`：Lineup、Justify 填满、窄区间警告/等量削减、和弦共槽（4）；
 - `src/beam.rs`：AUTO 连接上下符干、按最短音符取 beam 数、单音符拒绝（3）；
+- `src/app.rs`：Beam 整体移动、普通音符只移动 P3/P4（2）；
 - `tests/engrave.rs`：样本渲染、PDF/SVG、编辑、音频、页面尺寸、item-bar 标记、Code 8 创建、P7 单线/隐藏、P10 英制/公制、全部 barline 类型、AUTO 前后 Beam 渲染（11）；
 - `tests/mus_roundtrip.rs`：三个样本 bit-exact、损坏模板、计数一致性、大文件 u32 头（4）；
 - `src/model.rs`：文本解码/字体 run（2）。

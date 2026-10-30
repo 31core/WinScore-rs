@@ -367,6 +367,11 @@ impl WinScoreApp {
         let idx = match tool {
             Tool::Select => return,
             Tool::Note { head, dur } => {
+                // P4 levels are diatonic steps: odd levels are staff lines,
+                // even levels are spaces.  Snapping to whole steps makes a
+                // clicked or dragged note land on a line or in a space rather
+                // than halfway between them.
+                let level = level.round();
                 let dur = if self.dotted { dur * 1.5 } else { dur };
                 let stem = if head == 2 || head == 3 {
                     self.accidental as f32
@@ -1453,9 +1458,13 @@ impl WinScoreApp {
                                 .unwrap_or(6.3);
                             let dy = -(pp.y - drag.origin.y) / (staff_space * 0.5);
                             let p3 = ((drag.p3 + dx) * 20.0).round() / 20.0;
-                            let p4 = ((drag.p4 + dy) * 2.0).round() / 2.0;
+                            let code = self.score.items[drag.item].code;
+                            let p4 = if code == 1 {
+                                (drag.p4 + dy).round()
+                            } else {
+                                ((drag.p4 + dy) * 2.0).round() / 2.0
+                            };
                             if let Some(it) = self.score.items.get_mut(drag.item) {
-                                let code = it.code;
                                 it.set(3, p3.clamp(-20.0, 220.0));
                                 it.set(4, p4.clamp(-30.0, 40.0));
                                 let ddx = p3 - drag.p3;
@@ -2429,6 +2438,65 @@ impl WinScoreApp {
         });
     }
 
+    fn show_position_buttons(&mut self, ui: &mut egui::Ui) {
+        let color = Color32::from_rgb(195, 195, 190);
+        for (label, dx, dy, tip) in [
+            ("<-1", -1.0, 0.0, "Move left 1 horizontal unit"),
+            ("<-10", -10.0, 0.0, "Move left 10 horizontal units"),
+            ("->1", 1.0, 0.0, "Move right 1 horizontal unit"),
+            ("->10", 10.0, 0.0, "Move right 10 horizontal units"),
+            ("^1", 0.0, 1.0, "Move up 1 scale step"),
+            ("^10", 0.0, 10.0, "Move up 10 scale steps"),
+            ("v1", 0.0, -1.0, "Move down 1 scale step"),
+            ("v10", 0.0, -10.0, "Move down 10 scale steps"),
+        ] {
+            let b = ui.add(
+                egui::Button::new(RichText::new(label).size(9.0).color(Color32::from_gray(15)))
+                    .fill(color)
+                    .stroke(Stroke::new(1.0_f32, Color32::from_gray(90)))
+                    .corner_radius(2.0)
+                    .min_size(Vec2::new(40.0, 19.0)),
+            );
+            if b.on_hover_text(tip).clicked() {
+                self.move_selected(dx, dy);
+            }
+        }
+    }
+
+    fn show_note_toolbar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
+            ui.label(RichText::new("NOTE EDIT").size(9.0).strong());
+            self.show_position_buttons(ui);
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::new(
+                        RichText::new("DONE")
+                            .size(9.0)
+                            .color(Color32::from_gray(15)),
+                    )
+                    .fill(Color32::from_rgb(200, 200, 195))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_gray(90)))
+                    .corner_radius(2.0)
+                    .min_size(Vec2::new(42.0, 19.0)),
+                )
+                .clicked()
+            {
+                self.selected = None;
+                self.tool = Tool::Select;
+                self.status = "Note edit closed.".into();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Note position: horizontal in SCORE units, vertical in scale steps (lines/spaces).",
+            )
+            .size(9.0)
+            .color(Color32::from_gray(55)),
+        );
+    }
+
     fn show_beam_toolbar(&mut self, ui: &mut egui::Ui) {
         let font = 9.0;
         let btn = |ui: &mut egui::Ui, label: &str, color: Color32| -> bool {
@@ -2485,6 +2553,8 @@ impl WinScoreApp {
                     .unwrap_or(1);
                 self.set_beam_count(current + 1);
             }
+            ui.separator();
+            self.show_position_buttons(ui);
             ui.separator();
             if btn(ui, "DELETE", pink) {
                 self.delete_selected();
@@ -2653,7 +2723,7 @@ impl WinScoreApp {
                     ui.label("Arrows: nudge 1 unit/step  |  Home/End: P3 ±10  |  PageUp/PageDown: P4 ±4\n[ / ]: previous/next staff  |  F2/F3: previous/next item  |  F9: leave edit  |  Delete: delete\nCtrl+Z / Ctrl+Shift+Z: undo / redo  |  Ctrl+S: save  |  Ctrl+O: open  |  F1: help");
                     ui.separator();
                     ui.strong("Command box (SCORE-style)");
-                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nAUTO / AUTOX — connect a selected Code 6 beam\nADJ / FLIP / BEAM+ — adjust or extend a beam\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — toggle P1–P20 / P21–P30 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
+                    ui.label("G file — get/open a file\nSA file — save as\nSM — save same\nI n — edit item n\nST staff codes — find items on a staff\nX — end edit\n3 42.5 — set P3 to 42.5\nL 2, R 2, U 1, D 1 — move\nOS, OH, OT — reorder objects\nLI / J / LJ / LJA — horizontal layout\nLJ 1 8 0 200 — staves 1–8, left 0, right 200\nAUTO / AUTOX — connect a selected Code 6 beam\nADJ / FLIP / BEAM+ — adjust or extend a beam\n<-1 <-10 ->1 ->10 ^1 ^10 v1 v10 — position buttons\nSelecting a note opens NOTE EDIT with the same eight buttons\nIN 6 0 0 1 200 — staff/P3/P4/P5/P6\nPM — toggle P1–P20 / P21–P30 parameter boxes\nUNDO, REDO, UND — history\nTOP, MID, BOT — scroll the page\nZ 1.5 — zoom");
                     ui.separator();
                     ui.strong("File compatibility");
                     ui.label("Reads and writes native binary WinScore .mus files, including code-16 text objects with their original font escapes and word padding. Unknown object codes are preserved even when they are not yet drawn.");
@@ -2868,6 +2938,22 @@ impl eframe::App for WinScoreApp {
         } else if self
             .selected
             .and_then(|i| self.score.items.get(i))
+            .map(|i| i.code == 1)
+            .unwrap_or(false)
+        {
+            egui::TopBottomPanel::top("note_edit")
+                .exact_height(50.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(Color32::from_rgb(204, 201, 193))
+                        .inner_margin(egui::Margin::symmetric(4, 1)),
+                )
+                .show(ctx, |ui| {
+                    self.show_note_toolbar(ui);
+                });
+        } else if self
+            .selected
+            .and_then(|i| self.score.items.get(i))
             .map(|i| i.code == 6)
             .unwrap_or(false)
         {
@@ -2974,4 +3060,29 @@ fn text_size_factor(item: &Item) -> f32 {
         p6 -= 100.0;
     }
     if p6 < 0.001 { 1.0 } else { p6 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moving_a_beam_translates_both_endpoints() {
+        let mut beam = Item::new(6, vec![6.0, 1.0, 10.0, 5.0, 7.0, 30.0, 11.0]);
+        translate_item(&mut beam, 2.0, 1.0);
+        assert_eq!(beam.get(3), 12.0);
+        assert_eq!(beam.get(4), 6.0);
+        assert_eq!(beam.get(6), 32.0);
+        assert_eq!(beam.get(5), 8.0);
+    }
+
+    #[test]
+    fn moving_a_note_changes_only_its_position() {
+        let mut note = Item::new(1, vec![1.0, 1.0, 10.0, 3.0, 10.0, 0.0, 1.0]);
+        translate_item(&mut note, -1.0, 2.0);
+        assert_eq!(note.get(3), 9.0);
+        assert_eq!(note.get(4), 5.0);
+        assert_eq!(note.get(5), 10.0);
+        assert_eq!(note.get(6), 0.0);
+    }
 }
