@@ -42,3 +42,22 @@ fn counts_are_consistent_for_all_samples() {
         assert_eq!(out.len(), 2 + count * 4, "{name}");
     }
 }
+
+#[test]
+fn writes_32_bit_header_for_large_scores() {
+    use winscore_rs::model::Item;
+    let mut score = Score::default();
+    for i in 0..9000 {
+        score.items.push(Item::new(
+            14,
+            vec![14.0, 1.0, (i % 200) as f32, 1.0, 0.0, 0.0, 0.0],
+        ));
+    }
+    let bytes = score.to_bytes().unwrap();
+    let n = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    assert!(n > u16::MAX as usize);
+    assert_eq!(bytes.len(), 4 + 4 * n);
+    let reread = Score::parse(&bytes).unwrap();
+    assert_eq!(reread.items.len(), 9000);
+    assert_eq!(reread.to_bytes().unwrap(), bytes);
+}

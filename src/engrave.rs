@@ -39,8 +39,13 @@ pub fn page_size_for(score: &Score) -> (f32, f32) {
         };
         let space = STAFF_SPACE * size;
         let p10 = item.get(10);
+        let unit = if score.trailer.metric {
+            72.0 / 2.54
+        } else {
+            72.0
+        };
         let bottom = if p10.abs() > 0.0001 {
-            PAGE_BOTTOM + p10 * 72.0
+            PAGE_BOTTOM + p10 * unit
         } else {
             PAGE_BOTTOM + (id - 1) as f32 * STAFF_DEFAULT_GAP + item.get(4) * size * STEP
         };
@@ -63,6 +68,7 @@ pub struct StaffGeo {
     pub lines: i32,
     pub visible: bool,
     pub bottom_level: f32,
+    pub line_width: f32,
 }
 
 impl StaffGeo {
@@ -181,8 +187,13 @@ impl<'a> Engraver<'a> {
                 PAGE_LEFT + p6 * SCORE_UNIT
             };
             let p10 = item.get(10);
+            let unit = if self.score.trailer.metric {
+                72.0 / 2.54
+            } else {
+                72.0
+            };
             let bottom = if p10.abs() > 0.0001 {
-                self.page_h - (PAGE_BOTTOM + p10 * 72.0)
+                self.page_h - (PAGE_BOTTOM + p10 * unit)
             } else {
                 self.page_h
                     - (PAGE_BOTTOM
@@ -201,8 +212,12 @@ impl<'a> Engraver<'a> {
                 lines = rest;
             }
             let visible = lines > 0;
-            let lines = if !visible { 0 } else { lines.max(2) };
+            // A one-line percussion staff is legal; P7=0 means the default
+            // five lines and P7=-1 means an invisible staff.
+            let lines = if !visible { 0 } else { lines.max(1) };
             let top = bottom - (lines - 1) as f32 * space;
+            // P11 is the printed line-width increment in 600-dpi pixels.
+            let line_width = (0.72 * size + item.get(11) * 0.12).max(0.25);
             self.staves.insert(
                 id,
                 StaffGeo {
@@ -216,6 +231,7 @@ impl<'a> Engraver<'a> {
                     lines,
                     visible,
                     bottom_level,
+                    line_width,
                 },
             );
         }
@@ -250,6 +266,7 @@ impl<'a> Engraver<'a> {
                     lines: 5,
                     visible: true,
                     bottom_level: 3.0,
+                    line_width: 0.72,
                 }
             });
         }
@@ -267,6 +284,7 @@ impl<'a> Engraver<'a> {
                     lines: 5,
                     visible: true,
                     bottom_level: 3.0,
+                    line_width: 0.72,
                 },
             );
         }
@@ -461,7 +479,7 @@ impl<'a> Engraver<'a> {
             if !st.visible {
                 continue;
             }
-            let thickness = (0.72 * st.size).max(0.4);
+            let thickness = st.line_width.max(0.4);
             for i in 0..st.lines {
                 let y = st.bottom - i as f32 * st.space;
                 self.draws
@@ -572,20 +590,11 @@ impl<'a> Engraver<'a> {
         let thick = (4.5 * st.size).max(2.0);
         let gap = (3.2 * st.size).max(2.0);
         match p5 {
-            1 => {
-                self.draws.line(
-                    Pt::new(x - gap * 0.5, y_bottom),
-                    Pt::new(x - gap * 0.5, y_top),
-                    color,
-                    thin,
-                );
-                self.draws.line(
-                    Pt::new(x + gap * 0.5, y_bottom),
-                    Pt::new(x + gap * 0.5, y_top),
-                    color,
-                    thin,
-                );
-            }
+            // P5=1 is the thin line that forms one half of a double bar.
+            1 => self
+                .draws
+                .line(Pt::new(x, y_bottom), Pt::new(x, y_top), color, thin),
+            // Double bar: a thin rule followed by a heavier one.
             2 => {
                 self.draws.line(
                     Pt::new(x - gap, y_bottom),
@@ -596,52 +605,58 @@ impl<'a> Engraver<'a> {
                 self.draws
                     .rect(x - 0.5, y_top, thick, y_bottom - y_top, color);
             }
+            // Final bar: the heavy rule carries the finality; no repeat dots.
             3 => {
-                self.draws
-                    .rect(x - gap * 0.5, y_top, thick, y_bottom - y_top, color);
                 self.draws.line(
-                    Pt::new(x + gap * 0.8, y_bottom),
-                    Pt::new(x + gap * 0.8, y_top),
+                    Pt::new(x - gap, y_bottom),
+                    Pt::new(x - gap, y_top),
                     color,
                     thin,
                 );
-                self.draw_repeat_dots(item, x + gap * 1.8, st, color);
+                self.draws
+                    .rect(x + thick * 0.55, y_top, thick, y_bottom - y_top, color);
             }
+            // End repeat: dots on the left of thin|thick.
             4 => {
+                self.draw_repeat_dots(item, x - gap * 2.2, st, color);
                 self.draws.line(
-                    Pt::new(x - gap * 0.8, y_bottom),
-                    Pt::new(x - gap * 0.8, y_top),
+                    Pt::new(x - gap, y_bottom),
+                    Pt::new(x - gap, y_top),
                     color,
                     thin,
                 );
                 self.draws
-                    .rect(x + gap * 0.5, y_top, thick, y_bottom - y_top, color);
-                self.draw_repeat_dots(item, x - gap * 1.8, st, color);
+                    .rect(x - 0.5, y_top, thick, y_bottom - y_top, color);
             }
+            // Start repeat: thick|thin with the dots on the right.
             5 => {
                 self.draws
                     .rect(x - gap - thick, y_top, thick, y_bottom - y_top, color);
-                self.draws.line(
-                    Pt::new(x - gap * 0.2, y_bottom),
-                    Pt::new(x - gap * 0.2, y_top),
-                    color,
-                    thin,
-                );
-                self.draw_repeat_dots(item, x + gap * 1.2, st, color);
-                self.draws.line(
-                    Pt::new(x + gap * 1.8, y_bottom),
-                    Pt::new(x + gap * 1.8, y_top),
-                    color,
-                    thin,
-                );
                 self.draws
-                    .rect(x + gap * 2.4, y_top, thick, y_bottom - y_top, color);
+                    .line(Pt::new(x, y_bottom), Pt::new(x, y_top), color, thin);
+                self.draw_repeat_dots(item, x + gap * 1.5, st, color);
             }
+            // Double repeat: thick|thin on the left, thin|thick on the right,
+            // with the two pairs of dots between the rules.
             6 => {
                 self.draws
-                    .rect(x - gap, y_top, thick, y_bottom - y_top, color);
+                    .rect(x - gap * 2.0 - thick, y_top, thick, y_bottom - y_top, color);
+                self.draws.line(
+                    Pt::new(x - gap * 1.15, y_bottom),
+                    Pt::new(x - gap * 1.15, y_top),
+                    color,
+                    thin,
+                );
+                self.draw_repeat_dots(item, x - gap * 0.45, st, color);
+                self.draw_repeat_dots(item, x + gap * 0.45, st, color);
+                self.draws.line(
+                    Pt::new(x + gap * 1.15, y_bottom),
+                    Pt::new(x + gap * 1.15, y_top),
+                    color,
+                    thin,
+                );
                 self.draws
-                    .rect(x + gap, y_top, thick, y_bottom - y_top, color);
+                    .rect(x + gap * 2.0, y_top, thick, y_bottom - y_top, color);
             }
             _ => {
                 self.draws
@@ -1541,8 +1556,8 @@ impl<'a> Engraver<'a> {
             x
         };
         match p7 {
-            0 => {
-                self.fonts.shape(b"_02tr", 10.0 * st.size, 1.0, 1.0, None);
+            // P7 0/1 = trill, 2 = mordent, 3 = inverted mordent, 4 = turn.
+            0 | 1 => {
                 self.draw_plain_text("tr", x, y, 10.0 * st.size, 2, color, 0.0);
                 if x2 > x {
                     self.draws.dotted_line(
@@ -1555,9 +1570,42 @@ impl<'a> Engraver<'a> {
                     );
                 }
             }
-            8 | 88 | -8 | -88 | 15 | 155 => {
-                let label = if p7.abs() == 8 { "8va" } else { "15ma" };
-                let above = !(p7 == -8 || p7 == -88);
+            2 | 3 => {
+                let glyph = if p7 == 2 {
+                    G_MORDENT
+                } else {
+                    G_INVERTED_MORDENT
+                };
+                if let Some(path) = self
+                    .fonts
+                    .music_glyph_centered(glyph, 4.0 * st.size, x, y, 0.0)
+                {
+                    self.draws.fill(path, color);
+                }
+            }
+            4 => {
+                if let Some(path) =
+                    self.fonts
+                        .music_glyph_centered(G_TURN, 4.0 * st.size, x, y, 0.0)
+                {
+                    self.draws.fill(path, color);
+                }
+            }
+            // P7 5/6 are 8va/15ma above, 7/8 are 8vb/15mb below.  The values
+            // 15/155/-8/-88 are kept for files written by older builds of
+            // this reimplementation.
+            5 | 6 | 7 | 8 | -8 | -88 | 15 | 155 => {
+                let (label, above) = match p7 {
+                    7 | 8 | -8 | -88 => {
+                        if p7 == -8 || p7 == -88 {
+                            ("15mb", false)
+                        } else {
+                            ("8vb", false)
+                        }
+                    }
+                    6 | 15 | 155 => ("15ma", true),
+                    _ => ("8va", true),
+                };
                 let ty = if above { y - 8.0 } else { y + 12.0 };
                 self.draw_plain_text(label, x, ty, 9.0 * st.size, 2, color, 0.0);
                 if x2 > x {

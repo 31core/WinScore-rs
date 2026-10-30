@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use winscore_rs::{engrave::Engraver, font::FontBook, model::Score, pdf, raster, svg};
+use winscore_rs::{engrave::Engraver, font::FontBook, layout, model::Score, pdf, raster, svg};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         eprintln!(
-            "usage: winscore-cli <input.mus> [output.png] [--dpi N] [--svg] [--pdf] [--inspect]"
+            "usage: winscore-cli <input.mus> [output.png] [--dpi N] [--svg] [--pdf] [--inspect] [--li|--lj]"
         );
         return Ok(());
     }
@@ -17,6 +17,7 @@ fn main() -> Result<()> {
     let mut do_svg = false;
     let mut do_pdf = false;
     let mut inspect = false;
+    let mut layout_mode: Option<bool> = None; // Some(false)=LI, Some(true)=LJ
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -27,6 +28,8 @@ fn main() -> Result<()> {
             "--svg" => do_svg = true,
             "--pdf" => do_pdf = true,
             "--inspect" => inspect = true,
+            "--li" => layout_mode = Some(false),
+            "--lj" => layout_mode = Some(true),
             other => output = Some(PathBuf::from(other)),
         }
         i += 1;
@@ -58,6 +61,18 @@ fn main() -> Result<()> {
         }
     }
 
+    let mut score = score;
+    if let Some(justify) = layout_mode {
+        let staves: Vec<i32> = score
+            .staff_ids()
+            .into_iter()
+            .filter(|s| (1..=200).contains(s))
+            .collect();
+        let low = staves.first().copied().unwrap_or(1);
+        let high = staves.last().copied().unwrap_or(low);
+        let report = layout::layout_score(&mut score, low, high, None, None, justify);
+        println!("{}", report.summary());
+    }
     let fonts = FontBook::load();
     let page = Engraver::new(&score, &fonts).engrave();
     if std::env::var("WS_DEBUG_PAINTS").is_ok() {

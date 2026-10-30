@@ -2,6 +2,7 @@ pub mod app;
 pub mod draw;
 pub mod engrave;
 pub mod font;
+pub mod layout;
 pub mod model;
 pub mod pdf;
 pub mod playback;

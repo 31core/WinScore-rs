@@ -301,7 +301,10 @@ impl Score {
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, MusError> {
-        let mut out = vec![0u8, 0u8]; // header placeholder
+        // The header is rewritten after the stream has been counted.  Reserve
+        // four bytes so both the historical u16 header and the u32 form used
+        // by large scores can be emitted without moving the object data.
+        let mut out = vec![0u8, 0u8, 0u8, 0u8];
         let mut word_count = 0usize;
 
         for item in &self.items {
@@ -351,10 +354,18 @@ impl Score {
         }
         word_count += 6;
 
-        if word_count > u16::MAX as usize {
-            return Err(MusError::TooLarge(word_count));
+        if word_count > i16::MAX as usize {
+            if word_count > u32::MAX as usize {
+                return Err(MusError::TooLarge(word_count));
+            }
+            // Section 2.1: large files replace the u16 count with a u32.  The
+            // low half is stored first, matching the little-endian float
+            // stream that follows.
+            out[0..4].copy_from_slice(&(word_count as u32).to_le_bytes());
+        } else {
+            out[0..2].copy_from_slice(&(word_count as u16).to_le_bytes());
+            out.drain(2..4);
         }
-        out[0..2].copy_from_slice(&(word_count as u16).to_le_bytes());
         Ok(out)
     }
 

@@ -108,7 +108,7 @@ fn engraves_item_bar_markings() {
     let fonts = FontBook::load();
     let mut score = Score::load("samples/mozart.mus").unwrap();
     // tr~, 8va, 15m, Ped., Ped. with extension, first and second endings.
-    for p7 in [0.0, 8.0, 15.0, 20.0, 21.0] {
+    for p7 in [0.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 20.0, 21.0, 22.0] {
         score.add_item(Item::new(7, vec![7.0, 8.0, 20.0, 13.0, 0.0, 32.0, p7]));
     }
     for n in [1.0, 2.0] {
@@ -135,4 +135,57 @@ fn engraves_created_code8_staff() {
     let page = Engraver::new(&score, &fonts).engrave();
     assert!(page.staves.contains_key(&9));
     assert!(page.draws.paints.len() > 50);
+}
+
+#[test]
+fn code8_line_count_and_invisible_staff_follow_p7() {
+    let fonts = FontBook::load();
+    let mut score = Score::load("samples/mozart.mus").unwrap();
+    score.add_item(Item::new(
+        8,
+        vec![8.0, 9.0, 0.0, -10.0, 0.8, 200.0, 1.0, 0.0, 0.0, 0.0],
+    ));
+    score.add_item(Item::new(
+        8,
+        vec![8.0, 10.0, 0.0, -14.0, 0.8, 200.0, -1.0, 0.0, 0.0, 0.0],
+    ));
+    let page = Engraver::new(&score, &fonts).engrave();
+    assert_eq!(page.staves[&9].lines, 1);
+    assert_eq!(page.staves[&10].lines, 0);
+    assert!(!page.staves[&10].visible);
+}
+
+#[test]
+fn engraves_all_barline_and_repeat_types() {
+    let fonts = FontBook::load();
+    let mut score = Score::load("samples/mozart.mus").unwrap();
+    for (i, p5) in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0].iter().enumerate() {
+        score.add_item(Item::new(
+            14,
+            vec![14.0, 1.0, 10.0 + i as f32 * 20.0, 2.0, *p5, 0.0],
+        ));
+    }
+    let page = Engraver::new(&score, &fonts).engrave();
+    assert!(page.draws.paints.len() > 50);
+    for p in &page.draws.paints {
+        assert!(p.path.min.x.is_finite() && p.path.min.y.is_finite());
+    }
+}
+
+#[test]
+fn code8_absolute_position_uses_measurement_unit() {
+    let fonts = FontBook::load();
+    let mut inches = Score::default();
+    inches.items.push(Item::new(
+        8,
+        vec![8.0, 1.0, 0.0, 0.0, 1.0, 200.0, 5.0, 0.0, 0.0, 1.0],
+    ));
+    let mut metric = inches.clone();
+    metric.trailer.metric = true;
+    let a = Engraver::new(&inches, &fonts).engrave();
+    let b = Engraver::new(&metric, &fonts).engrave();
+    let da = a.staves[&1].bottom - inches.trailer.undefined;
+    let db = b.staves[&1].bottom - metric.trailer.undefined;
+    // P10=1 inch vs P10=1 cm: the metric staff must sit higher by 72-28.35 pt.
+    assert!((da - db + (72.0 - 72.0 / 2.54)).abs() < 0.01);
 }

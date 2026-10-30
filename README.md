@@ -17,15 +17,21 @@ model, and renders a letter-size page with real vector outlines.
 ### A real WinScore-style desktop app
 
 * Classic light-grey, bevel-edged UI with the familiar **two colourful button banks**,
-  item palette, P1–P20 parameter matrix, status/message box and SCORE-style command line.
+  item palette, P1–P20/P21–P30 parameter matrix, status/message box and SCORE-style command line.
 * Open, save, save-as, recent files, and a directory browser for `.mus` files.
 * Click to select any object; drag to move; arrow keys nudge; Delete removes; undo/redo.
-* Edit every numeric parameter directly in the P1–P20 boxes, or use the command box:
+* Edit every numeric parameter directly in the P1–P20 / P21–P30 boxes, or use the command box:
   `3 42.5` changes P3, `L 2`/`U 1` nudges, `I 214` jumps to an object, `ST 6 1` finds
   notes on staff 6, `OS`/`OH`/`OT` reorder, `UNDO`/`REDO`, `TOP`/`MID`/`BOT`, `Z 1.5`.
+* Implemented horizontal layout passes: `LI` lines up a staff's rhythmic columns,
+  `J`/`LJ` justify them across the staff width, and `LJA` applies the pass to all
+  normal staves.  Staff ranges and explicit left/right bounds are accepted, e.g.
+  `LJ 1 8 0 200`.  The original "Not enough space" warning and equal width reduction
+  are reproduced; beam endpoints follow the moved notes.
 * Palette tools place notes, rests, clefs, meters, key signatures, barlines, braces,
-  beams, slurs, hairpins, trills, ottavas, pedals, first/second endings, text,
-  dynamics, rehearsal numbers and more.
+  beams, slurs, hairpins, trills, ottavas (8va/8vb/15ma/15mb), pedals, first/second
+  endings, text, dynamics, rehearsal numbers and more.  Barline P5 types follow the
+  documented single/double/final/left-repeat/right-repeat/double-repeat encoding.
 * **Create Code 8 Staff** dialog (Format menu or STAFF in the item bar) writes a real
   Code 8 staff with P2/P3/P4/P5/P6/P7/P9/P10 columns; duplicate staff numbers are
   rejected, and the page is re-engraved immediately.
@@ -43,13 +49,18 @@ model, and renders a letter-size page with real vector outlines.
   `mozart.mus`, `carmen.mus` and `sonlcs.mus`.
 * Unknown object codes and unused parameters survive a load/save cycle.
 * Preserves the historical, sometimes noisy, object-count words and text padding bytes.
+* Writes the 32-bit word-count header used by scores above 32,767 words; the reader
+  auto-detects both forms from the file length.
 * Editing operations write ordinary SCORE parameter blocks that WinScore can read back.
 
 ### Engraving quality
 
 * Original WinScore 554 × 643 pt page, 7.5-inch (540 pt) music area, and the 0–200 horizontal coordinate system.
 * Staff vertical placement follows the documented formula
-  `(staff−1)·18 steps + P4·P5`, with absolute P10 (inch) positioning supported.
+  `(staff−1)·18 steps + P4·P5`, with absolute P10 positioning in inches or
+  centimetres according to the file's measurement code.
+  Code 8 P7 covers five-line, one-line, invisible (`-1`) and three-digit
+  start-line/line-count forms; P11 adds to the printed line width.
 * Full object engraver for notes, chords, rests, clefs, key signatures, meters, barlines,
   braces/brackets, beams, slurs/ties, endings, tuplets, text, dynamics, numbers,
   hairpins, trills, ottavas, pedal lines, boxes/circles and articulation marks.
@@ -85,6 +96,7 @@ cargo run --release --bin winscore-cli -- samples/sonlcs.mus output/sonlcs.png -
 cargo run --release --bin winscore-cli -- samples/sonlcs.mus output/sonlcs.svg --svg
 cargo run --release --bin winscore-cli -- samples/sonlcs.mus output/sonlcs.pdf --pdf
 cargo run --release --bin winscore-cli -- samples/mozart.mus --inspect
+cargo run --release --bin winscore-cli -- samples/mozart.mus output/lj.png --lj
 ```
 
 Build a double-clickable app:
@@ -107,8 +119,12 @@ back to the bundled metrically compatible Liberation Serif.
 | Click object | Select / edit object |
 | Drag object | Move it |
 | Double-click text | Edit text |
-| Arrow keys | Move selected object by half a step / half a scale step |
-| Shift + arrows | Same (kept for WinScore muscle memory) |
+| Arrow keys | Move selected object 1 unit / 1 scale step |
+| Home / End | Move P3 by 10 units |
+| PageUp / PageDown | Move P4 by 4 steps |
+| `[` / `]` | Move selected object to the previous / next staff |
+| F2 / F3 | Previous / next object |
+| F9 | Leave edit mode |
 | Delete / Backspace | Delete selected object |
 | Esc | Leave edit mode |
 | Ctrl/Cmd + Z | Undo |
@@ -120,11 +136,13 @@ The command box understands the SCORE editing idiom:
 
 ```
 G FILE.MUS        SA FILE.MUS        SM
-IN 6              NOTE 6            REST 6
+IN 6 0 0 1 200    NOTE 6            REST 6
 3 42.5            4 8.5             L 2 / R 2 / U 1 / D 1
 I 214             ST 6 1            OS / OH / OT
+LI / J / LJ       LJ 1 8 0 200      LJA
 UNDO / REDO / UND / DE
-TOP / MID / BOT   Z 1.5             VER / PM
+TOP / MID / BOT   Z 1.5             VER
+PM                PM 25             P1–P20 / P21–P30 toggle
 ```
 
 Parameters are the published SCORE parameters. See
@@ -161,9 +179,15 @@ Current tests cover:
 * bit-exact `.mus` round-trips for the complete supplied samples;
 * tolerant parsing of the damaged `000.mus` template without panics;
 * vector export headers and page geometry;
+* Lineup/Justify geometry, narrow-range warning and chord slots;
+* 32-bit headers for scores above 32,767 words;
+* Code 8 P7 line-count/invisible forms and every barline P5 type;
 * editing, text insertion, save/reparse and word-count consistency;
 * a valid RIFF/WAVE audition export;
 * engraving every supplied score without NaN coordinates and with selectable objects.
+
+The full comparison against the reverse-engineering specification, including what was
+fixed and what remains, is in [`docs/SPEC-COMPLIANCE.md`](docs/SPEC-COMPLIANCE.md).
 
 ## Compatibility notes and honest limitations
 
@@ -176,9 +200,10 @@ Current tests cover:
 * Part extraction, the DRAW editor, conditional `IF…THEN` editing, EPS import and the
   MIDI file format are not implemented in this build. Unknown objects are still kept
   byte-for-byte when saving.
-* Newly placed objects are not automatically re-justified across a measure; WinScore
-  pages retain their original engraved P3 positions, and manual `L/R`/drag editing is
-  exact. A future release should add the full LJ/J spacing pass.
+* Imported pages retain their original engraved P3 positions until `LI`/`J`/`LJ` is
+  invoked, matching WinScore's explicit layout workflow.  The layout pass currently
+  treats each staff independently; cross-staff system synchronization (the full
+  `LJ`/`VJ` system pass) and text (`JT`) justification remain on the roadmap.
 * Glyph coverage is strongest for common notation and the supplied scores. Exotic Code 9
   library entries and a handful of very rare ornaments fall back to being selectable but
   undrawn.
