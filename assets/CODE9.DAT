@@ -1,0 +1,54 @@
+% The format of the front of each line must be exactly maintained.
+% After the 4-digit number and ONE space comes the 3-character font code.
+% The actual text string can include up to 150 characters.
+%   current limits = 70 items, 700 bytes for all items.
+3000 _00>>a2
+3001 _00Trgl.
+3002 _00Cymb.
+3003 _00seules
+3004 _02l<<eger
+3005 _00divis<<es
+3006 _00unis.
+3007 _00gr. Caisse\Cymb.
+3008 _00Silence
+3009 _02legato
+3010 _00changez en _02Ut
+3011 _00changez en _02R<<e
+3012 _00changez en _02Mi
+3013 _00changez en _02Mi?1
+3014 _00changez en _02Fa
+3015 _00changez en _02Sol
+3016 _00changez en _02La
+3017 _00changez en _02Si
+3018 _00changez en _02Si?1
+3019 _02ten.
+3020 _02espress.
+3021 _00changez en _02Mi?3
+3022 _00sourdines
+3023 _00mettez les sourdines
+3024 _00^^otez les sourdines
+3025 _00tr>>es long
+3026 _02tr>>es l<<eger
+3027 _02colla voce
+3028 _02colla parte
+3029 _02un peu retenu
+3030 _00solo
+3031 _02cresc. molto
+3032 _02dim. molto
+3033 _02simile
+3034 _00lant.
+3035 _00rapide
+3036 _02suivez
+3037 _02rall. molto
+3038 _00tous    
+3039 _00Prenez la Petite Fl^^ute
+3040 _00Prenez la Grande Fl^^ute
+3041 _02moins
+3042 _02peu moins
+3043 _02sempre
+3044 _00laissez vibrer
+3045 _02smorzando
+3046 _001?m
+3047 _002?m
+3048 _003?m
+3049 _004?m

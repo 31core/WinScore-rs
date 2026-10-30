@@ -1,0 +1,32 @@
+[package]
+name = "winscore-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A Rust reimplementation of WinScore 5.01, the legendary SCORE music engraving system"
+license = "MIT"
+
+[[bin]]
+name = "winscore"
+path = "src/main.rs"
+
+[[bin]]
+name = "winscore-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+anyhow = "1"
+eframe = { version = "0.31.1", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+egui = "0.31.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny-skia = "0.11"
+thiserror = "2"
+ttf-parser = "0.25"
+owned_ttf_parser = "0.25"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

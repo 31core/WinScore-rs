@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.mus binary
+*.otf binary
+*.ttf binary
+*.png binary
+*.pdf binary
+
+assets/CODE9.DAT -text

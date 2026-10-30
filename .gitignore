@@ -1,0 +1,16 @@
+/target
+/.cargo
+/ref
+/output
+/dist
+.DS_Store
+*.wav
+*.log
+
+# Generated renderings and exports (docs)
+/docs/*.png
+/docs/*.pdf
+/docs/*.svg
+
+# macOS metadata
+**/.DS_Store
