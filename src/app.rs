@@ -29,6 +29,10 @@ enum Tool {
     Beam,
     Hairpin,
     Number,
+    Trill,
+    Ottava(i32),
+    Pedal(i32),
+    Ending(i32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -406,6 +410,32 @@ impl WinScoreApp {
             Tool::Number => self
                 .score
                 .add_item(Item::new(10, vec![10.0, staff as f32, p3, level, 1.0, 1.0])),
+            Tool::Trill => self.score.add_item(Item::new(
+                7,
+                vec![7.0, staff as f32, p3, 13.0, 0.0, p3 + 12.0, 0.0],
+            )),
+            Tool::Ottava(kind) => self.score.add_item(Item::new(
+                7,
+                vec![7.0, staff as f32, p3, 15.0, 0.0, p3 + 12.0, kind as f32],
+            )),
+            Tool::Pedal(kind) => self.score.add_item(Item::new(
+                7,
+                vec![7.0, staff as f32, p3, 1.0, 0.0, p3 + 8.0, kind as f32],
+            )),
+            Tool::Ending(number) => self.score.add_item(Item::new(
+                5,
+                vec![
+                    5.0,
+                    staff as f32,
+                    p3,
+                    13.0,
+                    13.0,
+                    p3 + 16.0,
+                    -2.0,
+                    number as f32,
+                    0.0,
+                ],
+            )),
             Tool::Text => {
                 self.text_target = Some(TextTarget::New {
                     staff,
@@ -1860,6 +1890,17 @@ impl WinScoreApp {
                 self.tool = Tool::Select;
             }
         });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(2.0, 1.0);
+            ui.label(RichText::new("MARKINGS").size(9.0).strong());
+            self.tool_button(ui, "tr~", c_line, Tool::Trill, "Trill with extension");
+            self.tool_button(ui, "8va", c_line, Tool::Ottava(8), "Ottava above");
+            self.tool_button(ui, "15m", c_line, Tool::Ottava(15), "Fifteenth above");
+            self.tool_button(ui, "PED", c_line, Tool::Pedal(20), "Pedal mark");
+            self.tool_button(ui, "PED~", c_line, Tool::Pedal(21), "Pedal with extension");
+            self.tool_button(ui, "1.", c_line, Tool::Ending(1), "First ending bracket");
+            self.tool_button(ui, "2.", c_line, Tool::Ending(2), "Second ending bracket");
+        });
     }
 
     fn show_main_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -2152,7 +2193,7 @@ impl eframe::App for WinScoreApp {
         // Items palette) and replaces the command bar while it is open.
         if self.show_palette {
             egui::TopBottomPanel::top("palette")
-                .exact_height(76.0)
+                .exact_height(100.0)
                 .frame(
                     egui::Frame::default()
                         .fill(Color32::from_rgb(204, 201, 193))

@@ -24,7 +24,8 @@ model, and renders a letter-size page with real vector outlines.
   `3 42.5` changes P3, `L 2`/`U 1` nudges, `I 214` jumps to an object, `ST 6 1` finds
   notes on staff 6, `OS`/`OH`/`OT` reorder, `UNDO`/`REDO`, `TOP`/`MID`/`BOT`, `Z 1.5`.
 * Palette tools place notes, rests, clefs, meters, key signatures, barlines, braces,
-  beams, slurs, hairpins, text, dynamics, rehearsal numbers and more.
+  beams, slurs, hairpins, trills, ottavas, pedals, first/second endings, text,
+  dynamics, rehearsal numbers and more.
 * Double-click a text object to edit its contents; `_NN` WinScore font escapes and the
   `<< >> ^^ %%` accent digraphs are supported.
 * Fit page / fit width, zoom, scrolling, staff number and page coordinates.

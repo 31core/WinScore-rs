@@ -102,3 +102,24 @@ fn page_sizes_follow_original_scores() {
     let sp = Engraver::new(&sonlcs, &fonts).engrave();
     assert_eq!((sp.width, sp.height), (612.0, 792.0));
 }
+
+#[test]
+fn engraves_item_bar_markings() {
+    let fonts = FontBook::load();
+    let mut score = Score::load("samples/mozart.mus").unwrap();
+    // tr~, 8va, 15m, Ped., Ped. with extension, first and second endings.
+    for p7 in [0.0, 8.0, 15.0, 20.0, 21.0] {
+        score.add_item(Item::new(7, vec![7.0, 8.0, 20.0, 13.0, 0.0, 32.0, p7]));
+    }
+    for n in [1.0, 2.0] {
+        score.add_item(Item::new(
+            5,
+            vec![5.0, 8.0, 20.0, 13.0, 13.0, 36.0, -2.0, n, 0.0],
+        ));
+    }
+    let page = Engraver::new(&score, &fonts).engrave();
+    assert!(page.draws.paints.len() > 50);
+    for p in &page.draws.paints {
+        assert!(p.path.min.x.is_finite() && p.path.min.y.is_finite());
+    }
+}
