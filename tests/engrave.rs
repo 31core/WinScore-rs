@@ -123,3 +123,16 @@ fn engraves_item_bar_markings() {
         assert!(p.path.min.x.is_finite() && p.path.min.y.is_finite());
     }
 }
+
+#[test]
+fn engraves_created_code8_staff() {
+    let fonts = FontBook::load();
+    let mut score = Score::load("samples/mozart.mus").unwrap();
+    score.add_item(Item::new(
+        8,
+        vec![8.0, 9.0, 0.0, -8.0, 0.9, 200.0, 5.0, 0.0, 1.0, 0.0],
+    ));
+    let page = Engraver::new(&score, &fonts).engrave();
+    assert!(page.staves.contains_key(&9));
+    assert!(page.draws.paints.len() > 50);
+}

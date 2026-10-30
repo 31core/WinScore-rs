@@ -57,6 +57,18 @@ enum TextTarget {
     New { staff: i32, p3: f32, p4: f32 },
 }
 
+#[derive(Debug, Clone)]
+struct StaffForm {
+    staff: i32,
+    p3: f32,
+    p4: f32,
+    p5: f32,
+    p6: f32,
+    lines: i32,
+    instrument: i32,
+    p10: f32,
+}
+
 pub struct WinScoreApp {
     score: Score,
     fonts: FontBook,
@@ -80,6 +92,8 @@ pub struct WinScoreApp {
     show_help: bool,
     show_about: bool,
     show_text_editor: bool,
+    show_staff_editor: bool,
+    staff_form: StaffForm,
     text_buf: String,
     text_target: Option<TextTarget>,
     text_font_prefix: String,
@@ -155,6 +169,17 @@ impl WinScoreApp {
             show_help: false,
             show_about: false,
             show_text_editor: false,
+            show_staff_editor: false,
+            staff_form: StaffForm {
+                staff: 1,
+                p3: 0.0,
+                p4: 0.0,
+                p5: 0.9,
+                p6: 200.0,
+                lines: 5,
+                instrument: 0,
+                p10: 0.0,
+            },
             text_buf: String::new(),
             text_target: None,
             text_font_prefix: "_00".into(),
@@ -175,6 +200,9 @@ impl WinScoreApp {
         }
         if std::env::var_os("WINSCORE_PALETTE").is_some() {
             app.show_palette = true;
+        }
+        if std::env::var_os("WINSCORE_STAFF").is_some() {
+            app.open_staff_editor();
         }
         if let Ok(v) = std::env::var("WINSCORE_SELECT") {
             if let Ok(n) = v.parse::<usize>() {
@@ -1273,6 +1301,136 @@ impl WinScoreApp {
         self.text_target = None;
     }
 
+    fn open_staff_editor(&mut self) {
+        self.staff_form.staff = (self.score.highest_staff() + 1).clamp(1, 256);
+        self.show_staff_editor = true;
+    }
+
+    fn staff_editor_window(&mut self, ctx: &egui::Context) {
+        if !self.show_staff_editor {
+            return;
+        }
+        let mut open = self.show_staff_editor;
+        let mut create = false;
+        egui::Window::new("Create Code 8 Staff")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(390.0)
+            .show(ctx, |ui| {
+                egui::Grid::new("staff-form")
+                    .num_columns(4)
+                    .spacing(Vec2::new(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label("Staff");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.staff)
+                                .speed(0.1)
+                                .range(1..=256),
+                        );
+                        ui.label("Size P5");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.p5)
+                                .speed(0.01)
+                                .range(0.2..=2.0),
+                        );
+                        ui.end_row();
+
+                        ui.label("Left P3");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.p3)
+                                .speed(0.1)
+                                .range(0.0..=200.0),
+                        );
+                        ui.label("Right P6");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.p6)
+                                .speed(0.1)
+                                .range(0.0..=200.0),
+                        );
+                        ui.end_row();
+
+                        ui.label("Vertical P4");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.p4)
+                                .speed(0.1)
+                                .range(-100.0..=100.0),
+                        );
+                        ui.label("Lines P7");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.lines)
+                                .speed(0.1)
+                                .range(0..=200),
+                        );
+                        ui.end_row();
+
+                        ui.label("Instrument P9");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.instrument)
+                                .speed(0.1)
+                                .range(0..=255),
+                        );
+                        ui.label("Abs. in P10");
+                        ui.add(
+                            egui::DragValue::new(&mut self.staff_form.p10)
+                                .speed(0.01)
+                                .range(-100.0..=100.0),
+                        );
+                        ui.end_row();
+                    });
+                ui.label(
+                    RichText::new(
+                        "P3/P6 are horizontal SCORE units (0–200). P5=1 is a five-line staff; P10 non-zero overrides P4 with inches above staff 1.",
+                    )
+                    .small(),
+                );
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Create staff").clicked() {
+                        create = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_staff_editor = false;
+                    }
+                });
+            });
+        if create {
+            let f = self.staff_form.clone();
+            if self
+                .score
+                .items
+                .iter()
+                .any(|i| i.code == 8 && i.staff() == f.staff)
+            {
+                self.status = format!("Staff {} already exists.", f.staff);
+                self.show_staff_editor = true;
+            } else {
+                self.push_undo();
+                let idx = self.score.add_item(Item::new(
+                    8,
+                    vec![
+                        8.0,
+                        f.staff as f32,
+                        f.p3,
+                        f.p4,
+                        f.p5,
+                        f.p6,
+                        f.lines as f32,
+                        0.0,
+                        f.instrument as f32,
+                        f.p10,
+                    ],
+                ));
+                self.selected = Some(idx);
+                self.show_staff_editor = false;
+                self.mark_changed();
+                self.status = format!("Created Code 8 staff {}.", f.staff);
+                open = false;
+            }
+        }
+        self.show_staff_editor &= open;
+    }
+
     fn text_editor_window(&mut self, ctx: &egui::Context) {
         if !self.show_text_editor {
             return;
@@ -1409,6 +1567,11 @@ impl WinScoreApp {
                 }
                 if ui.button("Delete selected item").clicked() {
                     self.delete_selected();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Create Code 8 Staff…").clicked() {
+                    self.open_staff_editor();
                     ui.close_menu();
                 }
                 ui.separator();
@@ -1841,6 +2004,18 @@ impl WinScoreApp {
             self.tool_button(ui, "FINAL", c_bar, Tool::Barline(2), "Final barline");
             self.tool_button(ui, "REP", c_bar, Tool::Barline(4), "Repeat barline");
             self.tool_button(ui, "BRACE", c_bar, Tool::Barline(8), "Brace");
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("STAFF").size(9.0))
+                        .fill(c_clef)
+                        .corner_radius(2.0)
+                        .min_size(Vec2::new(46.0, 20.0)),
+                )
+                .on_hover_text("Create a Code 8 staff")
+                .clicked()
+            {
+                self.open_staff_editor();
+            }
         });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(2.0, 1.0);
@@ -2222,6 +2397,7 @@ impl eframe::App for WinScoreApp {
                 self.draw_canvas(ui);
             });
 
+        self.staff_editor_window(ctx);
         self.text_editor_window(ctx);
         self.help_window(ctx);
         self.about_window(ctx);

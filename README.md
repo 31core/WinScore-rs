@@ -26,6 +26,9 @@ model, and renders a letter-size page with real vector outlines.
 * Palette tools place notes, rests, clefs, meters, key signatures, barlines, braces,
   beams, slurs, hairpins, trills, ottavas, pedals, first/second endings, text,
   dynamics, rehearsal numbers and more.
+* **Create Code 8 Staff** dialog (Format menu or STAFF in the item bar) writes a real
+  Code 8 staff with P2/P3/P4/P5/P6/P7/P9/P10 columns; duplicate staff numbers are
+  rejected, and the page is re-engraved immediately.
 * Double-click a text object to edit its contents; `_NN` WinScore font escapes and the
   `<< >> ^^ %%` accent digraphs are supported.
 * Fit page / fit width, zoom, scrolling, staff number and page coordinates.
